@@ -702,7 +702,7 @@ figcaption {
 
 .edit-tool-toggle {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -741,7 +741,14 @@ figcaption {
 .pen-actions {
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.small-button.is-active {
+  border-color: rgba(15, 123, 104, 0.42);
+  background: #e8f4ee;
+  color: var(--accent-strong);
 }
 
 .preview-image-wrap.checker,
@@ -809,6 +816,10 @@ figcaption {
   z-index: 1;
 }
 
+.edit-canvas-wrap[data-tool="eraser"] #editCanvas {
+  cursor: cell;
+}
+
 #penOverlayCanvas {
   position: absolute;
   inset: 0;
@@ -822,6 +833,11 @@ figcaption {
 .edit-canvas-wrap.is-panning,
 .edit-canvas-wrap.is-panning #editCanvas {
   cursor: grabbing;
+}
+
+.edit-canvas-wrap.is-erasing,
+.edit-canvas-wrap.is-erasing #editCanvas {
+  cursor: cell;
 }
 
 @media (max-width: 880px) {

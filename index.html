@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>批量抠图 + 高清放大</title>
-    <link rel="stylesheet" href="./styles.css?v=20260604-4" />
+    <link rel="stylesheet" href="./styles.css?v=20260604-5" />
   </head>
   <body>
     <main class="app-shell">
@@ -238,6 +238,10 @@
               <input type="radio" name="editTool" value="pen" />
               <span>钢笔抠除</span>
             </label>
+            <label>
+              <input type="radio" name="editTool" value="eraser" />
+              <span>橡皮擦</span>
+            </label>
           </div>
           <label class="slider-row" for="editToleranceRange">
             <span>吸管容差</span>
@@ -249,7 +253,13 @@
             <output id="editEdgeOutput">55</output>
           </label>
           <input id="editEdgeRange" type="range" min="0" max="100" step="1" value="55" />
+          <label class="slider-row" for="eraserSizeRange">
+            <span>橡皮大小</span>
+            <output id="eraserSizeOutput">28</output>
+          </label>
+          <input id="eraserSizeRange" type="range" min="8" max="120" step="1" value="28" />
           <div class="pen-actions">
+            <button class="small-button" id="invertSelectionButton" type="button" disabled>反转选区</button>
             <button class="small-button" id="finishPenButton" type="button" disabled>完成路径</button>
             <button class="small-button" id="clearPenButton" type="button" disabled>清除路径</button>
           </div>
@@ -263,6 +273,6 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=20260604-4"></script>
+    <script src="./app.js?v=20260604-5"></script>
   </body>
 </html>
