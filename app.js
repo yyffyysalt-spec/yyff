@@ -36,11 +36,17 @@ const els = {
   previewCloseButton: document.querySelector("#previewCloseButton"),
   editModal: document.querySelector("#editModal"),
   editCanvas: document.querySelector("#editCanvas"),
+  penOverlayCanvas: document.querySelector("#penOverlayCanvas"),
+  editCanvasStage: document.querySelector(".edit-canvas-stage"),
   editCanvasWrap: document.querySelector(".edit-canvas-wrap"),
   editTitle: document.querySelector("#editTitle"),
   editMeta: document.querySelector("#editMeta"),
   editToleranceRange: document.querySelector("#editToleranceRange"),
   editToleranceOutput: document.querySelector("#editToleranceOutput"),
+  editEdgeRange: document.querySelector("#editEdgeRange"),
+  editEdgeOutput: document.querySelector("#editEdgeOutput"),
+  finishPenButton: document.querySelector("#finishPenButton"),
+  clearPenButton: document.querySelector("#clearPenButton"),
   editUndoButton: document.querySelector("#editUndoButton"),
   editApplyButton: document.querySelector("#editApplyButton"),
   editCloseButton: document.querySelector("#editCloseButton"),
@@ -87,6 +93,8 @@ let editViewScale = 1;
 let isEditPanning = false;
 let didEditPan = false;
 let editPanStart = { x: 0, y: 0, scrollLeft: 0, scrollTop: 0 };
+let editTool = "pick";
+let penPoints = [];
 
 els.toleranceRange.addEventListener("input", () => {
   els.toleranceOutput.value = els.toleranceRange.value;
@@ -135,10 +143,20 @@ els.previewModal.addEventListener("close", clearPreviewModal);
 els.editToleranceRange.addEventListener("input", () => {
   els.editToleranceOutput.value = els.editToleranceRange.value;
 });
+els.editEdgeRange.addEventListener("input", () => {
+  els.editEdgeOutput.value = els.editEdgeRange.value;
+});
+document.querySelectorAll('input[name="editTool"]').forEach((input) => {
+  input.addEventListener("change", () => {
+    setEditTool(input.value);
+  });
+});
 els.editCloseButton.addEventListener("click", () => els.editModal.close());
 els.editUndoButton.addEventListener("click", undoEditPick);
 els.editApplyButton.addEventListener("click", applyEditResult);
 els.editCanvas.addEventListener("click", handleEditPick);
+els.finishPenButton.addEventListener("click", applyPenErase);
+els.clearPenButton.addEventListener("click", clearPenPath);
 els.editCanvasWrap.addEventListener("wheel", handleEditWheel, { passive: false });
 els.editCanvasWrap.addEventListener("mousedown", startEditPan);
 els.editCanvasWrap.addEventListener("keydown", handleEditKeydown);
@@ -291,14 +309,24 @@ function openEditor(item) {
   editItem = item;
   editUndoStack = [];
   editPickCount = 0;
+  penPoints = [];
+  setEditTool("pick");
   els.editCanvas.width = item.resultCanvas.width;
   els.editCanvas.height = item.resultCanvas.height;
+  els.penOverlayCanvas.width = item.resultCanvas.width;
+  els.penOverlayCanvas.height = item.resultCanvas.height;
   els.editCanvas.style.width = "";
   els.editCanvas.style.height = "";
+  els.editCanvasStage.style.width = "";
+  els.editCanvasStage.style.height = "";
+  els.penOverlayCanvas.style.width = "";
+  els.penOverlayCanvas.style.height = "";
   els.editCanvas.getContext("2d").drawImage(item.resultCanvas, 0, 0);
+  clearPenOverlay();
   els.editTitle.textContent = item.outputName;
   updateEditMeta();
   updateEditUndoButton();
+  updatePenButtons();
 
   if (typeof els.editModal.showModal === "function") {
     els.editModal.showModal();
@@ -319,9 +347,20 @@ function handleEditPick(event) {
   const y = Math.floor(((event.clientY - rect.top) / rect.height) * els.editCanvas.height);
   if (x < 0 || y < 0 || x >= els.editCanvas.width || y >= els.editCanvas.height) return;
 
+  if (editTool === "pen") {
+    addPenPoint(x, y);
+    return;
+  }
+
   const ctx = els.editCanvas.getContext("2d", { willReadFrequently: true });
   const before = ctx.getImageData(0, 0, els.editCanvas.width, els.editCanvas.height);
-  const removed = smartEraseAt(els.editCanvas, x, y, Number(els.editToleranceRange.value));
+  const removed = smartEraseAt(
+    els.editCanvas,
+    x,
+    y,
+    Number(els.editToleranceRange.value),
+    Number(els.editEdgeRange.value),
+  );
   if (!removed) return;
 
   editUndoStack.push(before);
@@ -355,7 +394,12 @@ function clearEditModal() {
   editItem = null;
   editUndoStack = [];
   editPickCount = 0;
+  penPoints = [];
+  clearPenOverlay();
+  els.editCanvasStage.style.width = "";
+  els.editCanvasStage.style.height = "";
   updateEditUndoButton();
+  updatePenButtons();
   const ctx = els.editCanvas.getContext("2d");
   ctx.clearRect(0, 0, els.editCanvas.width, els.editCanvas.height);
 }
@@ -368,6 +412,121 @@ function updateEditMeta(removed = 0) {
 
 function updateEditUndoButton() {
   els.editUndoButton.disabled = editUndoStack.length === 0;
+}
+
+function setEditTool(tool) {
+  editTool = tool;
+  els.editCanvasWrap.dataset.tool = tool;
+  document.querySelectorAll('input[name="editTool"]').forEach((input) => {
+    input.checked = input.value === tool;
+  });
+  updatePenButtons();
+}
+
+function addPenPoint(x, y) {
+  penPoints.push({ x, y });
+  drawPenOverlay();
+  updatePenButtons();
+}
+
+function clearPenPath() {
+  penPoints = [];
+  clearPenOverlay();
+  updatePenButtons();
+}
+
+function updatePenButtons() {
+  const isPen = editTool === "pen";
+  els.finishPenButton.disabled = !isPen || penPoints.length < 3;
+  els.clearPenButton.disabled = !isPen || penPoints.length === 0;
+}
+
+function clearPenOverlay() {
+  const ctx = els.penOverlayCanvas.getContext("2d");
+  ctx.clearRect(0, 0, els.penOverlayCanvas.width, els.penOverlayCanvas.height);
+}
+
+function drawPenOverlay() {
+  const ctx = els.penOverlayCanvas.getContext("2d");
+  clearPenOverlay();
+  if (!penPoints.length) return;
+
+  ctx.save();
+  ctx.lineWidth = Math.max(2, els.penOverlayCanvas.width / 420);
+  ctx.strokeStyle = "#0f7b68";
+  ctx.fillStyle = "rgba(15, 123, 104, 0.14)";
+  ctx.setLineDash([8, 6]);
+  ctx.beginPath();
+  ctx.moveTo(penPoints[0].x, penPoints[0].y);
+  for (const point of penPoints.slice(1)) {
+    ctx.lineTo(point.x, point.y);
+  }
+  if (penPoints.length >= 3) {
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  for (const point of penPoints) {
+    ctx.beginPath();
+    ctx.fillStyle = "#ffffff";
+    ctx.arc(point.x, point.y, Math.max(4, els.penOverlayCanvas.width / 180), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#0f7b68";
+    ctx.lineWidth = Math.max(2, els.penOverlayCanvas.width / 520);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function applyPenErase() {
+  if (!editItem || penPoints.length < 3) return;
+  const ctx = els.editCanvas.getContext("2d", { willReadFrequently: true });
+  const before = ctx.getImageData(0, 0, els.editCanvas.width, els.editCanvas.height);
+  const removed = erasePolygonArea(els.editCanvas, penPoints, Number(els.editEdgeRange.value));
+  if (!removed) return;
+
+  editUndoStack.push(before);
+  editPickCount += 1;
+  clearPenPath();
+  updateEditMeta(removed);
+  updateEditUndoButton();
+}
+
+function erasePolygonArea(canvas, points, edgeStrength) {
+  const maskCanvas = document.createElement("canvas");
+  maskCanvas.width = canvas.width;
+  maskCanvas.height = canvas.height;
+  const maskCtx = maskCanvas.getContext("2d");
+  maskCtx.fillStyle = "#fff";
+  maskCtx.beginPath();
+  maskCtx.moveTo(points[0].x, points[0].y);
+  for (const point of points.slice(1)) {
+    maskCtx.lineTo(point.x, point.y);
+  }
+  maskCtx.closePath();
+  maskCtx.fill();
+
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = image.data;
+  const maskData = maskCtx.getImageData(0, 0, canvas.width, canvas.height).data;
+  const mask = new Uint8Array(canvas.width * canvas.height);
+  let removed = 0;
+
+  for (let i = 0; i < mask.length; i += 1) {
+    if (maskData[i * 4 + 3] > 0 && data[i * 4 + 3] > 0) {
+      data[i * 4 + 3] = 0;
+      mask[i] = 1;
+      removed += 1;
+    }
+  }
+
+  if (!removed) return 0;
+  refineEditedEdges(data, mask, canvas.width, canvas.height, edgeStrength);
+  ctx.putImageData(image, 0, 0);
+  return removed;
 }
 
 function fitEditCanvasToView() {
@@ -394,8 +553,12 @@ function applyEditViewScale(anchor = null) {
   const newWidth = Math.max(1, Math.round(els.editCanvas.width * displayScale));
   const newHeight = Math.max(1, Math.round(els.editCanvas.height * displayScale));
 
+  els.editCanvasStage.style.width = `${newWidth}px`;
+  els.editCanvasStage.style.height = `${newHeight}px`;
   els.editCanvas.style.width = `${newWidth}px`;
   els.editCanvas.style.height = `${newHeight}px`;
+  els.penOverlayCanvas.style.width = `${newWidth}px`;
+  els.penOverlayCanvas.style.height = `${newHeight}px`;
 
   if (anchor) {
     wrap.scrollLeft = Math.max(0, ratioX * newWidth - anchor.x);
@@ -405,8 +568,8 @@ function applyEditViewScale(anchor = null) {
 
 function centerEditCanvas() {
   const wrap = els.editCanvasWrap;
-  wrap.scrollLeft = Math.max(0, (els.editCanvas.offsetWidth - wrap.clientWidth) / 2);
-  wrap.scrollTop = Math.max(0, (els.editCanvas.offsetHeight - wrap.clientHeight) / 2);
+  wrap.scrollLeft = Math.max(0, (els.editCanvasStage.offsetWidth - wrap.clientWidth) / 2);
+  wrap.scrollTop = Math.max(0, (els.editCanvasStage.offsetHeight - wrap.clientHeight) / 2);
 }
 
 function setEditViewScale(nextScale, anchor = null) {
@@ -462,7 +625,7 @@ function endEditPan() {
 
 function handleEditKeydown(event) {
   if (!editItem) return;
-  if (event.target === els.editToleranceRange) return;
+  if (event.target === els.editToleranceRange || event.target === els.editEdgeRange) return;
   const step = event.shiftKey ? 96 : 42;
   if (event.key === "+" || event.key === "=") {
     event.preventDefault();
@@ -794,7 +957,7 @@ function rgbToLab(r, g, b) {
   return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
 }
 
-function smartEraseAt(canvas, startX, startY, tolerance) {
+function smartEraseAt(canvas, startX, startY, tolerance, edgeStrength) {
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const data = image.data;
@@ -852,9 +1015,45 @@ function smartEraseAt(canvas, startX, startY, tolerance) {
   }
 
   if (!removed) return 0;
-  softenEdges(data, mask, width, height, 1);
+  refineEditedEdges(data, mask, width, height, edgeStrength);
   ctx.putImageData(image, 0, 0);
   return removed;
+}
+
+function refineEditedEdges(data, mask, width, height, strength) {
+  const amount = Math.max(0, Math.min(1, strength / 100));
+  if (!amount) return;
+
+  const radius = strength >= 72 ? 2 : 1;
+  const originalAlpha = new Uint8ClampedArray(width * height);
+  for (let i = 0; i < originalAlpha.length; i += 1) {
+    originalAlpha[i] = data[i * 4 + 3];
+  }
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const pixel = y * width + x;
+      if (mask[pixel]) continue;
+
+      let erasedNeighbors = 0;
+      let checked = 0;
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+          checked += 1;
+          if (mask[ny * width + nx]) erasedNeighbors += 1;
+        }
+      }
+
+      if (erasedNeighbors > 0) {
+        const edgeRatio = erasedNeighbors / Math.max(1, checked);
+        data[pixel * 4 + 3] = Math.max(0, Math.round(originalAlpha[pixel] * (1 - edgeRatio * amount * 0.92)));
+      }
+    }
+  }
 }
 
 function shrinkEdges(data, mask, width, height, amount) {

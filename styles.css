@@ -700,6 +700,50 @@ figcaption {
   padding: 10px 12px;
 }
 
+.edit-tool-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #eef5f0;
+  padding: 4px;
+}
+
+.edit-tool-toggle label {
+  position: relative;
+  min-width: 0;
+}
+
+.edit-tool-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.edit-tool-toggle span {
+  display: grid;
+  min-height: 36px;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.edit-tool-toggle input:checked + span {
+  background: #fff;
+  color: var(--ink);
+  box-shadow: 0 6px 18px rgba(35, 58, 48, 0.12);
+}
+
+.pen-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .preview-image-wrap.checker,
 .edit-canvas-wrap.checker {
   background:
@@ -735,10 +779,24 @@ figcaption {
   cursor: grab;
 }
 
+.edit-canvas-stage {
+  position: relative;
+  display: block;
+}
+
 #editCanvas {
+  position: relative;
   display: block;
   cursor: crosshair;
   image-rendering: auto;
+  z-index: 1;
+}
+
+#penOverlayCanvas {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
 }
 
 .edit-canvas-wrap.is-panning,
@@ -809,6 +867,10 @@ figcaption {
   }
 
   .preview-actions {
+    justify-content: space-between;
+  }
+
+  .pen-actions {
     justify-content: space-between;
   }
 
