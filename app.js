@@ -105,6 +105,7 @@ let isErasing = false;
 let eraserUndoSnapshot = null;
 let eraserRemovedTotal = 0;
 let eraserPreviewPointer = null;
+let eraserLastPoint = null;
 
 els.toleranceRange.addEventListener("input", () => {
   els.toleranceOutput.value = els.toleranceRange.value;
@@ -333,6 +334,7 @@ function openEditor(item) {
   eraserUndoSnapshot = null;
   eraserRemovedTotal = 0;
   eraserPreviewPointer = null;
+  eraserLastPoint = null;
   setEditTool("pick");
   els.editCanvas.width = item.resultCanvas.width;
   els.editCanvas.height = item.resultCanvas.height;
@@ -426,6 +428,7 @@ function clearEditModal() {
   eraserUndoSnapshot = null;
   eraserRemovedTotal = 0;
   eraserPreviewPointer = null;
+  eraserLastPoint = null;
   hideEraserBrushPreview();
   clearPenOverlay();
   els.editCanvasStage.style.width = "";
@@ -733,6 +736,7 @@ function startEraserStroke(event) {
   const ctx = els.editCanvas.getContext("2d", { willReadFrequently: true });
   eraserUndoSnapshot = ctx.getImageData(0, 0, els.editCanvas.width, els.editCanvas.height);
   eraserRemovedTotal = 0;
+  eraserLastPoint = point;
   isErasing = true;
   didEditPan = true;
   els.editCanvasWrap.classList.add("is-erasing");
@@ -741,7 +745,8 @@ function startEraserStroke(event) {
 
 function moveEraserStroke(event) {
   const point = getEditCanvasPoint(event);
-  if (point) eraseAtPoint(point);
+  if (!point) return;
+  eraseStrokeToPoint(point);
 }
 
 function endEraserStroke() {
@@ -756,6 +761,7 @@ function endEraserStroke() {
   }
   eraserUndoSnapshot = null;
   eraserRemovedTotal = 0;
+  eraserLastPoint = null;
   updateEraserBrushPreview();
   setTimeout(() => {
     didEditPan = false;
@@ -773,27 +779,64 @@ function eraseAtPoint(point) {
   eraserRemovedTotal += removed;
 }
 
+function eraseStrokeToPoint(point) {
+  if (!eraserLastPoint) {
+    eraserLastPoint = point;
+    eraseAtPoint(point);
+    return;
+  }
+
+  const radius = Number(els.eraserSizeRange.value);
+  const dx = point.x - eraserLastPoint.x;
+  const dy = point.y - eraserLastPoint.y;
+  const distance = Math.hypot(dx, dy);
+  if (distance < Math.max(1, radius * 0.18)) return;
+
+  const spacing = Math.max(1, radius * 0.32);
+  const steps = Math.max(1, Math.ceil(distance / spacing));
+  for (let step = 1; step <= steps; step += 1) {
+    const ratio = step / steps;
+    eraseAtPoint({
+      x: eraserLastPoint.x + dx * ratio,
+      y: eraserLastPoint.y + dy * ratio,
+    });
+  }
+  eraserLastPoint = point;
+}
+
 function eraseBrushArea(canvas, centerX, centerY, radius, edgeStrength) {
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const edgeRadius = edgeStrength >= 72 ? 2 : 1;
+  const margin = Math.ceil(radius + edgeRadius + 2);
+  const minX = Math.max(0, Math.floor(centerX - margin));
+  const maxX = Math.min(canvas.width - 1, Math.ceil(centerX + margin));
+  const minY = Math.max(0, Math.floor(centerY - margin));
+  const maxY = Math.min(canvas.height - 1, Math.ceil(centerY + margin));
+  const width = maxX - minX + 1;
+  const height = maxY - minY + 1;
+  if (width <= 0 || height <= 0) return 0;
+
+  const image = ctx.getImageData(minX, minY, width, height);
   const data = image.data;
-  const mask = new Uint8Array(canvas.width * canvas.height);
+  const mask = new Uint8Array(width * height);
   const softness = Math.max(0.12, Math.min(0.82, edgeStrength / 100));
   const softStart = radius * (1 - softness * 0.45);
   let removed = 0;
 
-  const minX = Math.max(0, Math.floor(centerX - radius));
-  const maxX = Math.min(canvas.width - 1, Math.ceil(centerX + radius));
-  const minY = Math.max(0, Math.floor(centerY - radius));
-  const maxY = Math.min(canvas.height - 1, Math.ceil(centerY + radius));
+  const brushMinX = Math.max(0, Math.floor(centerX - radius) - minX);
+  const brushMaxX = Math.min(width - 1, Math.ceil(centerX + radius) - minX);
+  const brushMinY = Math.max(0, Math.floor(centerY - radius) - minY);
+  const brushMaxY = Math.min(height - 1, Math.ceil(centerY + radius) - minY);
+  const localCenterX = centerX - minX;
+  const localCenterY = centerY - minY;
 
-  for (let y = minY; y <= maxY; y += 1) {
-    for (let x = minX; x <= maxX; x += 1) {
-      const dx = x - centerX;
-      const dy = y - centerY;
+  for (let y = brushMinY; y <= brushMaxY; y += 1) {
+    for (let x = brushMinX; x <= brushMaxX; x += 1) {
+      const dx = x - localCenterX;
+      const dy = y - localCenterY;
       const distance = Math.sqrt(dx * dx + dy * dy);
       if (distance > radius) continue;
-      const pixel = y * canvas.width + x;
+      const pixel = y * width + x;
       const alphaIndex = pixel * 4 + 3;
       const alpha = data[alphaIndex];
       if (!alpha) continue;
@@ -802,15 +845,15 @@ function eraseBrushArea(canvas, centerX, centerY, radius, edgeStrength) {
       const nextAlpha = Math.max(0, Math.round(alpha * (1 - fade)));
       if (nextAlpha < alpha) {
         data[alphaIndex] = nextAlpha;
-        mask[pixel] = nextAlpha === 0 ? 1 : 0;
+        mask[pixel] = 1;
         removed += 1;
       }
     }
   }
 
   if (!removed) return 0;
-  refineEditedEdges(data, mask, canvas.width, canvas.height, edgeStrength);
-  ctx.putImageData(image, 0, 0);
+  refineEditedEdges(data, mask, width, height, edgeStrength);
+  ctx.putImageData(image, minX, minY);
   return removed;
 }
 
