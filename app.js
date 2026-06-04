@@ -826,7 +826,7 @@ function processBitmap(bitmap, options) {
 
 function readOptions() {
   const model = els.modelSelect.value;
-  const preset = MODEL_PRESETS[model] ?? MODEL_PRESETS["local-clean"];
+  const preset = MODEL_PRESETS[model] ?? MODEL_PRESETS["local-fast"];
 
   return {
     mode: document.querySelector('input[name="mode"]:checked').value,
