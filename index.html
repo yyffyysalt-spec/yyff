@@ -1,1 +1,268 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>批量抠图 + 高清放大</title>
+    <link rel="stylesheet" href="./styles.css?v=20260604-2" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="workspace">
+        <aside class="panel tools-panel" aria-label="处理设置">
+          <div class="brand-row">
+            <div>
+              <p class="eyebrow">Image Batch Studio</p>
+              <h1>批量抠图 + 高清放大</h1>
+            </div>
+            <span class="status-pill" id="queueStatus">待上传</span>
+          </div>
 
+          <label class="drop-zone" id="dropZone">
+            <input id="fileInput" type="file" accept="image/*" multiple />
+            <span class="drop-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" role="img"><path d="M12 3v12m0-12 4 4m-4-4-4 4M5 15v3a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-3"/></svg>
+            </span>
+            <span class="drop-title">拖入图片或点击上传</span>
+            <span class="drop-copy">支持 PNG、JPG、WEBP，可一次选择多张</span>
+          </label>
+
+          <div class="control-group">
+            <span class="control-label">处理模式</span>
+            <div class="segmented" role="radiogroup" aria-label="处理模式">
+              <label>
+                <input type="radio" name="mode" value="cutout-upscale" checked />
+                <span>抠图 + 放大</span>
+              </label>
+              <label>
+                <input type="radio" name="mode" value="cutout" />
+                <span>只抠图</span>
+              </label>
+              <label>
+                <input type="radio" name="mode" value="upscale" />
+                <span>只放大</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="control-grid">
+            <label class="field">
+              <span>抠图模型</span>
+              <select id="modelSelect">
+                <option value="local-fast">本地极速</option>
+                <option value="local-clean" selected>本地精细</option>
+                <option value="local-strong">本地强力</option>
+                <option value="birefnet-lite">BiRefNet Lite</option>
+                <option value="birefnet">BiRefNet 通用</option>
+                <option value="rmbg-2">RMBG-2.0 精抠</option>
+                <option value="modnet">MODNet 人像</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>放大倍数</span>
+              <select id="scaleSelect">
+                <option value="2">2x</option>
+                <option value="3">3x</option>
+                <option value="4">4x</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>边缘柔化</span>
+              <select id="featherSelect">
+                <option value="1">轻微</option>
+                <option value="2" selected>自然</option>
+                <option value="4">更柔</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>边缘收缩</span>
+              <select id="shrinkSelect">
+                <option value="0" selected>不收缩</option>
+                <option value="1">轻微</option>
+                <option value="2">明显</option>
+                <option value="3">强力</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="control-group">
+            <label class="slider-row" for="toleranceRange">
+              <span>背景容差</span>
+              <output id="toleranceOutput">36</output>
+            </label>
+            <input id="toleranceRange" type="range" min="12" max="90" step="1" value="36" />
+          </div>
+
+          <div class="control-grid">
+            <label class="field">
+              <span>背景颜色</span>
+              <select id="backgroundSelect">
+                <option value="transparent" selected>透明</option>
+                <option value="#ffffff">白色</option>
+                <option value="#111111">黑色</option>
+                <option value="custom">自定义</option>
+              </select>
+            </label>
+            <label class="field color-field">
+              <span>自定义颜色</span>
+              <span class="color-row">
+                <input id="customColorInput" type="color" value="#ffffff" disabled />
+                <span id="customColorText">#ffffff</span>
+              </span>
+            </label>
+          </div>
+
+          <div class="toggle-list">
+            <label class="toggle">
+              <input id="trimToggle" type="checkbox" checked />
+              <span>自动裁掉透明边</span>
+            </label>
+            <label class="toggle">
+              <input id="sharpenToggle" type="checkbox" checked />
+              <span>放大后轻微锐化</span>
+            </label>
+            <label class="toggle">
+              <input id="checkerToggle" type="checkbox" checked />
+              <span>预览透明棋盘格</span>
+            </label>
+          </div>
+
+          <div class="actions">
+            <button class="primary-button" id="processButton" type="button" disabled>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.6 5.2L19 10l-5.4 1.8L12 17l-1.6-5.2L5 10l5.4-1.8L12 3Z"/><path d="m19 16 .8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z"/></svg>
+              开始处理
+            </button>
+            <button class="icon-button" id="downloadButton" type="button" disabled title="下载 ZIP">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10m0 0 4-4m-4 4-4-4M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"/></svg>
+            </button>
+            <button class="icon-button" id="clearButton" type="button" disabled title="清空">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
+            </button>
+          </div>
+        </aside>
+
+        <section class="stage" aria-label="图片列表">
+          <div class="stage-header">
+            <div>
+              <h2>任务列表</h2>
+              <p id="hintText">上传图片后会在这里显示原图与处理结果。</p>
+            </div>
+            <div class="progress-wrap" aria-live="polite">
+              <span id="progressText">0 / 0</span>
+              <div class="progress-track"><span id="progressBar"></span></div>
+            </div>
+          </div>
+
+          <div class="empty-state" id="emptyState">
+            <div class="sample-stack" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <p>把商品图、证件照或头像拖进来，批量生成透明 PNG。</p>
+          </div>
+
+          <div class="image-grid" id="imageGrid"></div>
+        </section>
+      </section>
+    </main>
+
+    <template id="imageCardTemplate">
+      <article class="image-card">
+        <div class="preview-pair">
+          <figure>
+            <figcaption>原图</figcaption>
+            <img class="original-preview" alt="原图预览" />
+          </figure>
+          <figure class="processed-figure checker">
+            <figcaption>结果</figcaption>
+            <canvas class="result-canvas" tabindex="0" role="button" aria-label="放大预览处理结果"></canvas>
+            <div class="card-status">等待处理</div>
+          </figure>
+        </div>
+        <div class="card-footer">
+          <div>
+            <strong class="file-name"></strong>
+            <span class="file-meta"></span>
+          </div>
+          <div class="card-buttons">
+            <button class="small-button edit-button" type="button" disabled>编辑</button>
+            <button class="small-button download-button" type="button" disabled>下载</button>
+          </div>
+        </div>
+      </article>
+    </template>
+
+    <dialog class="preview-modal" id="previewModal" aria-labelledby="previewTitle">
+      <div class="preview-panel">
+        <div class="preview-toolbar">
+          <div>
+            <h2 id="previewTitle">结果预览</h2>
+            <p id="previewMeta"></p>
+          </div>
+          <div class="preview-actions">
+            <button class="small-button" id="previewDownloadButton" type="button">下载</button>
+            <button class="icon-button" id="previewCloseButton" type="button" title="关闭">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="preview-image-wrap checker">
+          <img id="previewImage" alt="放大的处理结果预览" />
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="edit-modal" id="editModal" aria-labelledby="editTitle">
+      <div class="edit-panel">
+        <div class="preview-toolbar">
+          <div>
+            <h2 id="editTitle">智能编辑区</h2>
+            <p id="editMeta"></p>
+          </div>
+          <div class="preview-actions">
+            <button class="small-button" id="editUndoButton" type="button" disabled>撤销</button>
+            <button class="small-button" id="editApplyButton" type="button">应用</button>
+            <button class="icon-button" id="editCloseButton" type="button" title="关闭">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="edit-controls">
+          <div class="edit-tool-toggle" role="radiogroup" aria-label="编辑工具">
+            <label>
+              <input type="radio" name="editTool" value="pick" checked />
+              <span>智能拾取</span>
+            </label>
+            <label>
+              <input type="radio" name="editTool" value="pen" />
+              <span>钢笔抠除</span>
+            </label>
+          </div>
+          <label class="slider-row" for="editToleranceRange">
+            <span>吸管容差</span>
+            <output id="editToleranceOutput">42</output>
+          </label>
+          <input id="editToleranceRange" type="range" min="8" max="120" step="1" value="42" />
+          <label class="slider-row" for="editEdgeRange">
+            <span>边缘强度</span>
+            <output id="editEdgeOutput">55</output>
+          </label>
+          <input id="editEdgeRange" type="range" min="0" max="100" step="1" value="55" />
+          <div class="pen-actions">
+            <button class="small-button" id="finishPenButton" type="button" disabled>完成路径</button>
+            <button class="small-button" id="clearPenButton" type="button" disabled>清除路径</button>
+          </div>
+        </div>
+        <div class="edit-canvas-wrap checker" tabindex="0" aria-label="编辑区图像，可滚轮缩放、拖动移动、方向键移动">
+          <div class="edit-canvas-stage">
+            <canvas id="editCanvas" aria-label="智能拾取编辑画布"></canvas>
+            <canvas id="penOverlayCanvas" aria-hidden="true"></canvas>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <script src="./app.js?v=20260604-2"></script>
+  </body>
+</html>
