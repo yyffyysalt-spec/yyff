@@ -820,8 +820,9 @@ figcaption {
   z-index: 1;
 }
 
+.edit-canvas-wrap[data-tool="eraser"],
 .edit-canvas-wrap[data-tool="eraser"] #editCanvas {
-  cursor: cell;
+  cursor: none;
 }
 
 #penOverlayCanvas {
@@ -835,6 +836,25 @@ figcaption {
   pointer-events: none;
 }
 
+#eraserBrushPreview {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 56px;
+  height: 56px;
+  border: 2px solid rgba(7, 47, 42, 0.9);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.95),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.9);
+  pointer-events: none;
+  z-index: 3;
+}
+
+#eraserBrushPreview[hidden] {
+  display: none;
+}
+
 .edit-canvas-wrap.is-panning,
 .edit-canvas-wrap.is-panning #editCanvas {
   cursor: grabbing;
@@ -842,7 +862,7 @@ figcaption {
 
 .edit-canvas-wrap.is-erasing,
 .edit-canvas-wrap.is-erasing #editCanvas {
-  cursor: cell;
+  cursor: none;
 }
 
 @media (max-width: 880px) {
