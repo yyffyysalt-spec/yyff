@@ -37,6 +37,7 @@ const els = {
   editModal: document.querySelector("#editModal"),
   editCanvas: document.querySelector("#editCanvas"),
   penOverlayCanvas: document.querySelector("#penOverlayCanvas"),
+  eraserBrushPreview: document.querySelector("#eraserBrushPreview"),
   editCanvasStage: document.querySelector(".edit-canvas-stage"),
   editCanvasWrap: document.querySelector(".edit-canvas-wrap"),
   editTitle: document.querySelector("#editTitle"),
@@ -103,6 +104,7 @@ let isSelectionInverted = false;
 let isErasing = false;
 let eraserUndoSnapshot = null;
 let eraserRemovedTotal = 0;
+let eraserPreviewPointer = null;
 
 els.toleranceRange.addEventListener("input", () => {
   els.toleranceOutput.value = els.toleranceRange.value;
@@ -156,6 +158,7 @@ els.editEdgeRange.addEventListener("input", () => {
 });
 els.eraserSizeRange.addEventListener("input", () => {
   els.eraserSizeOutput.value = els.eraserSizeRange.value;
+  updateEraserBrushPreview();
 });
 document.querySelectorAll('input[name="editTool"]').forEach((input) => {
   input.addEventListener("change", () => {
@@ -171,6 +174,9 @@ els.finishPenButton.addEventListener("click", applyPenErase);
 els.clearPenButton.addEventListener("click", clearPenPath);
 els.editCanvasWrap.addEventListener("wheel", handleEditWheel, { passive: false });
 els.editCanvasWrap.addEventListener("mousedown", startEditPan);
+els.editCanvasWrap.addEventListener("mousemove", updateEraserBrushPreview);
+els.editCanvasWrap.addEventListener("mouseenter", updateEraserBrushPreview);
+els.editCanvasWrap.addEventListener("mouseleave", hideEraserBrushPreview);
 els.editCanvasWrap.addEventListener("keydown", handleEditKeydown);
 window.addEventListener("mousemove", moveEditPan);
 window.addEventListener("mouseup", endEditPan);
@@ -326,6 +332,7 @@ function openEditor(item) {
   isErasing = false;
   eraserUndoSnapshot = null;
   eraserRemovedTotal = 0;
+  eraserPreviewPointer = null;
   setEditTool("pick");
   els.editCanvas.width = item.resultCanvas.width;
   els.editCanvas.height = item.resultCanvas.height;
@@ -418,6 +425,8 @@ function clearEditModal() {
   isErasing = false;
   eraserUndoSnapshot = null;
   eraserRemovedTotal = 0;
+  eraserPreviewPointer = null;
+  hideEraserBrushPreview();
   clearPenOverlay();
   els.editCanvasStage.style.width = "";
   els.editCanvasStage.style.height = "";
@@ -445,6 +454,11 @@ function setEditTool(tool) {
   document.querySelectorAll('input[name="editTool"]').forEach((input) => {
     input.checked = input.value === tool;
   });
+  if (tool !== "eraser") {
+    hideEraserBrushPreview();
+  } else {
+    updateEraserBrushPreview();
+  }
   updatePenButtons();
 }
 
@@ -617,6 +631,7 @@ function applyEditViewScale(anchor = null) {
   }
   clampEditViewOffset(newWidth, newHeight);
   applyEditCanvasTransform();
+  updateEraserBrushPreview();
 }
 
 function applyEditCanvasTransform() {
@@ -655,6 +670,7 @@ function startEditPan(event) {
   if (!editItem || event.button !== 0) return;
   els.editCanvasWrap.focus();
   if (editTool === "eraser") {
+    updateEraserBrushPreview(event);
     startEraserStroke(event);
     return;
   }
@@ -670,6 +686,7 @@ function startEditPan(event) {
 }
 
 function moveEditPan(event) {
+  if (editTool === "eraser") updateEraserBrushPreview(event);
   if (isErasing) {
     moveEraserStroke(event);
     return;
@@ -739,6 +756,7 @@ function endEraserStroke() {
   }
   eraserUndoSnapshot = null;
   eraserRemovedTotal = 0;
+  updateEraserBrushPreview();
   setTimeout(() => {
     didEditPan = false;
   }, 0);
@@ -831,6 +849,42 @@ function moveEditCanvasImage(dx, dy) {
   };
   clampEditViewOffset();
   applyEditCanvasTransform();
+  updateEraserBrushPreview();
+}
+
+function updateEraserBrushPreview(event = null) {
+  if (event?.clientX !== undefined && event?.clientY !== undefined) {
+    eraserPreviewPointer = { x: event.clientX, y: event.clientY };
+  }
+  if (!editItem || editTool !== "eraser" || !eraserPreviewPointer) {
+    hideEraserBrushPreview();
+    return;
+  }
+
+  const canvasRect = els.editCanvas.getBoundingClientRect();
+  const wrapRect = els.editCanvasWrap.getBoundingClientRect();
+  const pointer = eraserPreviewPointer;
+  const isInsideCanvas =
+    pointer.x >= canvasRect.left &&
+    pointer.x <= canvasRect.right &&
+    pointer.y >= canvasRect.top &&
+    pointer.y <= canvasRect.bottom;
+
+  if (!canvasRect.width || !canvasRect.height || !isInsideCanvas) {
+    hideEraserBrushPreview();
+    return;
+  }
+
+  const displayScale = canvasRect.width / Math.max(1, els.editCanvas.width);
+  const diameter = Math.max(8, Number(els.eraserSizeRange.value) * 2 * displayScale);
+  els.eraserBrushPreview.hidden = false;
+  els.eraserBrushPreview.style.width = `${diameter}px`;
+  els.eraserBrushPreview.style.height = `${diameter}px`;
+  els.eraserBrushPreview.style.transform = `translate(${pointer.x - wrapRect.left}px, ${pointer.y - wrapRect.top}px) translate(-50%, -50%)`;
+}
+
+function hideEraserBrushPreview() {
+  els.eraserBrushPreview.hidden = true;
 }
 
 function processBitmap(bitmap, options) {
