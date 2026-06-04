@@ -93,9 +93,10 @@ let editUndoStack = [];
 let editPickCount = 0;
 let editBaseScale = 1;
 let editViewScale = 1;
+let editViewOffset = { x: 0, y: 0 };
 let isEditPanning = false;
 let didEditPan = false;
-let editPanStart = { x: 0, y: 0, scrollLeft: 0, scrollTop: 0 };
+let editPanStart = { x: 0, y: 0, offsetX: 0, offsetY: 0 };
 let editTool = "pick";
 let penPoints = [];
 let isSelectionInverted = false;
@@ -332,10 +333,10 @@ function openEditor(item) {
   els.penOverlayCanvas.height = item.resultCanvas.height;
   els.editCanvas.style.width = "";
   els.editCanvas.style.height = "";
-  els.editCanvasStage.style.width = "";
-  els.editCanvasStage.style.height = "";
+  els.editCanvas.style.transform = "";
   els.penOverlayCanvas.style.width = "";
   els.penOverlayCanvas.style.height = "";
+  els.penOverlayCanvas.style.transform = "";
   els.editCanvas.getContext("2d").drawImage(item.resultCanvas, 0, 0);
   clearPenOverlay();
   els.editTitle.textContent = item.outputName;
@@ -420,6 +421,8 @@ function clearEditModal() {
   clearPenOverlay();
   els.editCanvasStage.style.width = "";
   els.editCanvasStage.style.height = "";
+  editViewOffset = { x: 0, y: 0 };
+  applyEditCanvasTransform();
   updateEditUndoButton();
   updatePenButtons();
   const ctx = els.editCanvas.getContext("2d");
@@ -585,39 +588,50 @@ function fitEditCanvasToView() {
   const availableHeight = Math.max(160, wrap.clientHeight - padding);
   editBaseScale = Math.min(1, availableWidth / els.editCanvas.width, availableHeight / els.editCanvas.height);
   editViewScale = 1;
+  editViewOffset = { x: 0, y: 0 };
   applyEditViewScale();
-  centerEditCanvas();
 }
 
 function applyEditViewScale(anchor = null) {
   const wrap = els.editCanvasWrap;
   const beforeWidth = els.editCanvas.getBoundingClientRect().width || els.editCanvas.width * editBaseScale;
   const beforeHeight = els.editCanvas.getBoundingClientRect().height || els.editCanvas.height * editBaseScale;
-  const beforeLeft = anchor ? wrap.scrollLeft + anchor.x : 0;
-  const beforeTop = anchor ? wrap.scrollTop + anchor.y : 0;
-  const ratioX = anchor ? beforeLeft / Math.max(1, beforeWidth) : 0.5;
-  const ratioY = anchor ? beforeTop / Math.max(1, beforeHeight) : 0.5;
+  const centerX = wrap.clientWidth / 2 + editViewOffset.x;
+  const centerY = wrap.clientHeight / 2 + editViewOffset.y;
+  const ratioX = anchor ? (anchor.x - centerX + beforeWidth / 2) / Math.max(1, beforeWidth) : 0.5;
+  const ratioY = anchor ? (anchor.y - centerY + beforeHeight / 2) / Math.max(1, beforeHeight) : 0.5;
   const displayScale = editBaseScale * editViewScale;
   const newWidth = Math.max(1, Math.round(els.editCanvas.width * displayScale));
   const newHeight = Math.max(1, Math.round(els.editCanvas.height * displayScale));
 
-  els.editCanvasStage.style.width = `${newWidth}px`;
-  els.editCanvasStage.style.height = `${newHeight}px`;
   els.editCanvas.style.width = `${newWidth}px`;
   els.editCanvas.style.height = `${newHeight}px`;
   els.penOverlayCanvas.style.width = `${newWidth}px`;
   els.penOverlayCanvas.style.height = `${newHeight}px`;
 
   if (anchor) {
-    wrap.scrollLeft = Math.max(0, ratioX * newWidth - anchor.x);
-    wrap.scrollTop = Math.max(0, ratioY * newHeight - anchor.y);
+    editViewOffset = {
+      x: anchor.x - wrap.clientWidth / 2 - (ratioX - 0.5) * newWidth,
+      y: anchor.y - wrap.clientHeight / 2 - (ratioY - 0.5) * newHeight,
+    };
   }
+  clampEditViewOffset(newWidth, newHeight);
+  applyEditCanvasTransform();
 }
 
-function centerEditCanvas() {
+function applyEditCanvasTransform() {
+  const transform = `translate(-50%, -50%) translate(${Math.round(editViewOffset.x)}px, ${Math.round(editViewOffset.y)}px)`;
+  els.editCanvas.style.transform = transform;
+  els.penOverlayCanvas.style.transform = transform;
+}
+
+function clampEditViewOffset(displayWidth = els.editCanvas.getBoundingClientRect().width, displayHeight = els.editCanvas.getBoundingClientRect().height) {
   const wrap = els.editCanvasWrap;
-  wrap.scrollLeft = Math.max(0, (els.editCanvasStage.offsetWidth - wrap.clientWidth) / 2);
-  wrap.scrollTop = Math.max(0, (els.editCanvasStage.offsetHeight - wrap.clientHeight) / 2);
+  const visibleEdge = 48;
+  const limitX = Math.max(0, (displayWidth + wrap.clientWidth) / 2 - visibleEdge);
+  const limitY = Math.max(0, (displayHeight + wrap.clientHeight) / 2 - visibleEdge);
+  editViewOffset.x = Math.max(-limitX, Math.min(limitX, editViewOffset.x));
+  editViewOffset.y = Math.max(-limitY, Math.min(limitY, editViewOffset.y));
 }
 
 function setEditViewScale(nextScale, anchor = null) {
@@ -649,8 +663,8 @@ function startEditPan(event) {
   editPanStart = {
     x: event.clientX,
     y: event.clientY,
-    scrollLeft: els.editCanvasWrap.scrollLeft,
-    scrollTop: els.editCanvasWrap.scrollTop,
+    offsetX: editViewOffset.x,
+    offsetY: editViewOffset.y,
   };
   els.editCanvasWrap.classList.add("is-panning");
 }
@@ -664,8 +678,12 @@ function moveEditPan(event) {
   const dx = event.clientX - editPanStart.x;
   const dy = event.clientY - editPanStart.y;
   if (Math.abs(dx) > 3 || Math.abs(dy) > 3) didEditPan = true;
-  els.editCanvasWrap.scrollLeft = editPanStart.scrollLeft - dx;
-  els.editCanvasWrap.scrollTop = editPanStart.scrollTop - dy;
+  editViewOffset = {
+    x: editPanStart.offsetX + dx,
+    y: editPanStart.offsetY + dy,
+  };
+  clampEditViewOffset();
+  applyEditCanvasTransform();
 }
 
 function endEditPan() {
@@ -790,20 +808,29 @@ function handleEditKeydown(event) {
     setEditViewScale(editViewScale / 1.16, { x: els.editCanvasWrap.clientWidth / 2, y: els.editCanvasWrap.clientHeight / 2 });
   } else if (event.key === "ArrowLeft") {
     event.preventDefault();
-    els.editCanvasWrap.scrollLeft -= step;
+    moveEditCanvasImage(-step, 0);
   } else if (event.key === "ArrowRight") {
     event.preventDefault();
-    els.editCanvasWrap.scrollLeft += step;
+    moveEditCanvasImage(step, 0);
   } else if (event.key === "ArrowUp") {
     event.preventDefault();
-    els.editCanvasWrap.scrollTop -= step;
+    moveEditCanvasImage(0, -step);
   } else if (event.key === "ArrowDown") {
     event.preventDefault();
-    els.editCanvasWrap.scrollTop += step;
+    moveEditCanvasImage(0, step);
   } else if (event.key === "0") {
     event.preventDefault();
     fitEditCanvasToView();
   }
+}
+
+function moveEditCanvasImage(dx, dy) {
+  editViewOffset = {
+    x: editViewOffset.x + dx,
+    y: editViewOffset.y + dy,
+  };
+  clampEditViewOffset();
+  applyEditCanvasTransform();
 }
 
 function processBitmap(bitmap, options) {

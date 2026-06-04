@@ -777,9 +777,9 @@ figcaption {
 .edit-canvas-wrap {
   position: relative;
   box-sizing: border-box;
-  display: grid;
-  place-items: center;
-  overflow: auto;
+  display: block;
+  overflow: hidden;
+  height: clamp(320px, 56vh, 520px);
   min-height: 320px;
   max-height: calc(100vh - 210px);
   border: 1px solid var(--line);
@@ -797,8 +797,10 @@ figcaption {
 }
 
 .edit-canvas-stage {
-  position: relative;
+  position: absolute;
+  inset: 0;
   display: block;
+  overflow: hidden;
   border: 0;
   background: transparent;
   box-shadow: none;
@@ -806,7 +808,9 @@ figcaption {
 }
 
 #editCanvas {
-  position: relative;
+  position: absolute;
+  top: 50%;
+  left: 50%;
   display: block;
   border: 0;
   cursor: crosshair;
@@ -822,7 +826,8 @@ figcaption {
 
 #penOverlayCanvas {
   position: absolute;
-  inset: 0;
+  top: 50%;
+  left: 50%;
   border: 0;
   outline: 0;
   box-shadow: none;
