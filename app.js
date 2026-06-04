@@ -45,6 +45,9 @@ const els = {
   editToleranceOutput: document.querySelector("#editToleranceOutput"),
   editEdgeRange: document.querySelector("#editEdgeRange"),
   editEdgeOutput: document.querySelector("#editEdgeOutput"),
+  eraserSizeRange: document.querySelector("#eraserSizeRange"),
+  eraserSizeOutput: document.querySelector("#eraserSizeOutput"),
+  invertSelectionButton: document.querySelector("#invertSelectionButton"),
   finishPenButton: document.querySelector("#finishPenButton"),
   clearPenButton: document.querySelector("#clearPenButton"),
   editUndoButton: document.querySelector("#editUndoButton"),
@@ -95,6 +98,10 @@ let didEditPan = false;
 let editPanStart = { x: 0, y: 0, scrollLeft: 0, scrollTop: 0 };
 let editTool = "pick";
 let penPoints = [];
+let isSelectionInverted = false;
+let isErasing = false;
+let eraserUndoSnapshot = null;
+let eraserRemovedTotal = 0;
 
 els.toleranceRange.addEventListener("input", () => {
   els.toleranceOutput.value = els.toleranceRange.value;
@@ -146,6 +153,9 @@ els.editToleranceRange.addEventListener("input", () => {
 els.editEdgeRange.addEventListener("input", () => {
   els.editEdgeOutput.value = els.editEdgeRange.value;
 });
+els.eraserSizeRange.addEventListener("input", () => {
+  els.eraserSizeOutput.value = els.eraserSizeRange.value;
+});
 document.querySelectorAll('input[name="editTool"]').forEach((input) => {
   input.addEventListener("change", () => {
     setEditTool(input.value);
@@ -155,6 +165,7 @@ els.editCloseButton.addEventListener("click", () => els.editModal.close());
 els.editUndoButton.addEventListener("click", undoEditPick);
 els.editApplyButton.addEventListener("click", applyEditResult);
 els.editCanvas.addEventListener("click", handleEditPick);
+els.invertSelectionButton.addEventListener("click", toggleSelectionInvert);
 els.finishPenButton.addEventListener("click", applyPenErase);
 els.clearPenButton.addEventListener("click", clearPenPath);
 els.editCanvasWrap.addEventListener("wheel", handleEditWheel, { passive: false });
@@ -310,6 +321,10 @@ function openEditor(item) {
   editUndoStack = [];
   editPickCount = 0;
   penPoints = [];
+  isSelectionInverted = false;
+  isErasing = false;
+  eraserUndoSnapshot = null;
+  eraserRemovedTotal = 0;
   setEditTool("pick");
   els.editCanvas.width = item.resultCanvas.width;
   els.editCanvas.height = item.resultCanvas.height;
@@ -342,10 +357,13 @@ function handleEditPick(event) {
   if (didEditPan) {
     return;
   }
-  const rect = els.editCanvas.getBoundingClientRect();
-  const x = Math.floor(((event.clientX - rect.left) / rect.width) * els.editCanvas.width);
-  const y = Math.floor(((event.clientY - rect.top) / rect.height) * els.editCanvas.height);
-  if (x < 0 || y < 0 || x >= els.editCanvas.width || y >= els.editCanvas.height) return;
+  const point = getEditCanvasPoint(event);
+  if (!point) return;
+  const { x, y } = point;
+
+  if (editTool === "eraser") {
+    return;
+  }
 
   if (editTool === "pen") {
     addPenPoint(x, y);
@@ -395,6 +413,10 @@ function clearEditModal() {
   editUndoStack = [];
   editPickCount = 0;
   penPoints = [];
+  isSelectionInverted = false;
+  isErasing = false;
+  eraserUndoSnapshot = null;
+  eraserRemovedTotal = 0;
   clearPenOverlay();
   els.editCanvasStage.style.width = "";
   els.editCanvasStage.style.height = "";
@@ -431,14 +453,25 @@ function addPenPoint(x, y) {
 
 function clearPenPath() {
   penPoints = [];
+  isSelectionInverted = false;
   clearPenOverlay();
   updatePenButtons();
 }
 
 function updatePenButtons() {
   const isPen = editTool === "pen";
+  els.invertSelectionButton.disabled = !isPen || penPoints.length < 3;
+  els.invertSelectionButton.classList.toggle("is-active", isPen && isSelectionInverted);
+  els.invertSelectionButton.textContent = isSelectionInverted ? "已反转" : "反转选区";
   els.finishPenButton.disabled = !isPen || penPoints.length < 3;
   els.clearPenButton.disabled = !isPen || penPoints.length === 0;
+}
+
+function toggleSelectionInvert() {
+  if (editTool !== "pen" || penPoints.length < 3) return;
+  isSelectionInverted = !isSelectionInverted;
+  drawPenOverlay();
+  updatePenButtons();
 }
 
 function clearPenOverlay() {
@@ -455,6 +488,18 @@ function drawPenOverlay() {
   ctx.lineWidth = Math.max(2, els.penOverlayCanvas.width / 420);
   ctx.strokeStyle = "#0f7b68";
   ctx.fillStyle = "rgba(15, 123, 104, 0.14)";
+
+  if (isSelectionInverted && penPoints.length >= 3) {
+    ctx.beginPath();
+    ctx.rect(0, 0, els.penOverlayCanvas.width, els.penOverlayCanvas.height);
+    ctx.moveTo(penPoints[0].x, penPoints[0].y);
+    for (const point of penPoints.slice(1)) {
+      ctx.lineTo(point.x, point.y);
+    }
+    ctx.closePath();
+    ctx.fill("evenodd");
+  }
+
   ctx.setLineDash([8, 6]);
   ctx.beginPath();
   ctx.moveTo(penPoints[0].x, penPoints[0].y);
@@ -463,7 +508,7 @@ function drawPenOverlay() {
   }
   if (penPoints.length >= 3) {
     ctx.closePath();
-    ctx.fill();
+    if (!isSelectionInverted) ctx.fill();
   }
   ctx.stroke();
   ctx.setLineDash([]);
@@ -484,7 +529,7 @@ function applyPenErase() {
   if (!editItem || penPoints.length < 3) return;
   const ctx = els.editCanvas.getContext("2d", { willReadFrequently: true });
   const before = ctx.getImageData(0, 0, els.editCanvas.width, els.editCanvas.height);
-  const removed = erasePolygonArea(els.editCanvas, penPoints, Number(els.editEdgeRange.value));
+  const removed = erasePolygonArea(els.editCanvas, penPoints, Number(els.editEdgeRange.value), isSelectionInverted);
   if (!removed) return;
 
   editUndoStack.push(before);
@@ -494,19 +539,22 @@ function applyPenErase() {
   updateEditUndoButton();
 }
 
-function erasePolygonArea(canvas, points, edgeStrength) {
+function erasePolygonArea(canvas, points, edgeStrength, inverted = false) {
   const maskCanvas = document.createElement("canvas");
   maskCanvas.width = canvas.width;
   maskCanvas.height = canvas.height;
   const maskCtx = maskCanvas.getContext("2d");
   maskCtx.fillStyle = "#fff";
   maskCtx.beginPath();
+  if (inverted) {
+    maskCtx.rect(0, 0, canvas.width, canvas.height);
+  }
   maskCtx.moveTo(points[0].x, points[0].y);
   for (const point of points.slice(1)) {
     maskCtx.lineTo(point.x, point.y);
   }
   maskCtx.closePath();
-  maskCtx.fill();
+  maskCtx.fill(inverted ? "evenodd" : "nonzero");
 
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -592,6 +640,10 @@ function handleEditWheel(event) {
 function startEditPan(event) {
   if (!editItem || event.button !== 0) return;
   els.editCanvasWrap.focus();
+  if (editTool === "eraser") {
+    startEraserStroke(event);
+    return;
+  }
   isEditPanning = true;
   didEditPan = false;
   editPanStart = {
@@ -604,6 +656,10 @@ function startEditPan(event) {
 }
 
 function moveEditPan(event) {
+  if (isErasing) {
+    moveEraserStroke(event);
+    return;
+  }
   if (!isEditPanning) return;
   const dx = event.clientX - editPanStart.x;
   const dy = event.clientY - editPanStart.y;
@@ -613,6 +669,10 @@ function moveEditPan(event) {
 }
 
 function endEditPan() {
+  if (isErasing) {
+    endEraserStroke();
+    return;
+  }
   if (!isEditPanning) return;
   isEditPanning = false;
   els.editCanvasWrap.classList.remove("is-panning");
@@ -623,9 +683,104 @@ function endEditPan() {
   }
 }
 
+function getEditCanvasPoint(event) {
+  const rect = els.editCanvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  const x = Math.floor(((event.clientX - rect.left) / rect.width) * els.editCanvas.width);
+  const y = Math.floor(((event.clientY - rect.top) / rect.height) * els.editCanvas.height);
+  if (x < 0 || y < 0 || x >= els.editCanvas.width || y >= els.editCanvas.height) return null;
+  return { x, y };
+}
+
+function startEraserStroke(event) {
+  const point = getEditCanvasPoint(event);
+  if (!point) return;
+  const ctx = els.editCanvas.getContext("2d", { willReadFrequently: true });
+  eraserUndoSnapshot = ctx.getImageData(0, 0, els.editCanvas.width, els.editCanvas.height);
+  eraserRemovedTotal = 0;
+  isErasing = true;
+  didEditPan = true;
+  els.editCanvasWrap.classList.add("is-erasing");
+  eraseAtPoint(point);
+}
+
+function moveEraserStroke(event) {
+  const point = getEditCanvasPoint(event);
+  if (point) eraseAtPoint(point);
+}
+
+function endEraserStroke() {
+  if (!isErasing) return;
+  isErasing = false;
+  els.editCanvasWrap.classList.remove("is-erasing");
+  if (eraserRemovedTotal && eraserUndoSnapshot) {
+    editUndoStack.push(eraserUndoSnapshot);
+    editPickCount += 1;
+    updateEditMeta(eraserRemovedTotal);
+    updateEditUndoButton();
+  }
+  eraserUndoSnapshot = null;
+  eraserRemovedTotal = 0;
+  setTimeout(() => {
+    didEditPan = false;
+  }, 0);
+}
+
+function eraseAtPoint(point) {
+  const removed = eraseBrushArea(
+    els.editCanvas,
+    point.x,
+    point.y,
+    Number(els.eraserSizeRange.value),
+    Number(els.editEdgeRange.value),
+  );
+  eraserRemovedTotal += removed;
+}
+
+function eraseBrushArea(canvas, centerX, centerY, radius, edgeStrength) {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = image.data;
+  const mask = new Uint8Array(canvas.width * canvas.height);
+  const softness = Math.max(0.12, Math.min(0.82, edgeStrength / 100));
+  const softStart = radius * (1 - softness * 0.45);
+  let removed = 0;
+
+  const minX = Math.max(0, Math.floor(centerX - radius));
+  const maxX = Math.min(canvas.width - 1, Math.ceil(centerX + radius));
+  const minY = Math.max(0, Math.floor(centerY - radius));
+  const maxY = Math.min(canvas.height - 1, Math.ceil(centerY + radius));
+
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      const dx = x - centerX;
+      const dy = y - centerY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance > radius) continue;
+      const pixel = y * canvas.width + x;
+      const alphaIndex = pixel * 4 + 3;
+      const alpha = data[alphaIndex];
+      if (!alpha) continue;
+
+      const fade = distance <= softStart ? 1 : 1 - (distance - softStart) / Math.max(1, radius - softStart);
+      const nextAlpha = Math.max(0, Math.round(alpha * (1 - fade)));
+      if (nextAlpha < alpha) {
+        data[alphaIndex] = nextAlpha;
+        mask[pixel] = nextAlpha === 0 ? 1 : 0;
+        removed += 1;
+      }
+    }
+  }
+
+  if (!removed) return 0;
+  refineEditedEdges(data, mask, canvas.width, canvas.height, edgeStrength);
+  ctx.putImageData(image, 0, 0);
+  return removed;
+}
+
 function handleEditKeydown(event) {
   if (!editItem) return;
-  if (event.target === els.editToleranceRange || event.target === els.editEdgeRange) return;
+  if (event.target === els.editToleranceRange || event.target === els.editEdgeRange || event.target === els.eraserSizeRange) return;
   const step = event.shiftKey ? 96 : 42;
   if (event.key === "+" || event.key === "=") {
     event.preventDefault();
