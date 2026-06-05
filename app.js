@@ -531,8 +531,15 @@ function drawPenOverlay() {
   clearPenOverlay();
   if (!penPoints.length) return;
 
+  const displayScale = getEditDisplayScale();
+  const fixedLineWidth = 3 / displayScale;
+  const fixedDash = 9 / displayScale;
+  const fixedGap = 7 / displayScale;
+  const fixedPointRadius = 15 / displayScale;
+  const fixedPointLineWidth = 4 / displayScale;
+
   ctx.save();
-  ctx.lineWidth = Math.max(2, els.penOverlayCanvas.width / 420);
+  ctx.lineWidth = fixedLineWidth;
   ctx.strokeStyle = "#0f7b68";
   ctx.fillStyle = "rgba(15, 123, 104, 0.14)";
 
@@ -547,7 +554,7 @@ function drawPenOverlay() {
     ctx.fill("evenodd");
   }
 
-  ctx.setLineDash([8, 6]);
+  ctx.setLineDash([fixedDash, fixedGap]);
   ctx.beginPath();
   ctx.moveTo(penPoints[0].x, penPoints[0].y);
   for (const point of penPoints.slice(1)) {
@@ -563,13 +570,18 @@ function drawPenOverlay() {
   for (const point of penPoints) {
     ctx.beginPath();
     ctx.fillStyle = "#ffffff";
-    ctx.arc(point.x, point.y, Math.max(4, els.penOverlayCanvas.width / 180), 0, Math.PI * 2);
+    ctx.arc(point.x, point.y, fixedPointRadius, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = "#0f7b68";
-    ctx.lineWidth = Math.max(2, els.penOverlayCanvas.width / 520);
+    ctx.lineWidth = fixedPointLineWidth;
     ctx.stroke();
   }
   ctx.restore();
+}
+
+function getEditDisplayScale() {
+  const rect = els.editCanvas.getBoundingClientRect();
+  return Math.max(0.01, rect.width / Math.max(1, els.editCanvas.width));
 }
 
 function applyPenErase() {
@@ -661,6 +673,7 @@ function applyEditViewScale(anchor = null) {
   }
   clampEditViewOffset(newWidth, newHeight);
   applyEditCanvasTransform();
+  drawPenOverlay();
   updateEraserBrushPreview();
 }
 
