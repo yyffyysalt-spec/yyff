@@ -48,6 +48,9 @@ const els = {
   editEdgeOutput: document.querySelector("#editEdgeOutput"),
   eraserSizeRange: document.querySelector("#eraserSizeRange"),
   eraserSizeOutput: document.querySelector("#eraserSizeOutput"),
+  editFillColorInput: document.querySelector("#editFillColorInput"),
+  editFillColorText: document.querySelector("#editFillColorText"),
+  fillBackgroundButton: document.querySelector("#fillBackgroundButton"),
   invertSelectionButton: document.querySelector("#invertSelectionButton"),
   finishPenButton: document.querySelector("#finishPenButton"),
   clearPenButton: document.querySelector("#clearPenButton"),
@@ -161,6 +164,9 @@ els.eraserSizeRange.addEventListener("input", () => {
   els.eraserSizeOutput.value = els.eraserSizeRange.value;
   updateEraserBrushPreview();
 });
+els.editFillColorInput.addEventListener("input", () => {
+  els.editFillColorText.textContent = els.editFillColorInput.value;
+});
 document.querySelectorAll('input[name="editTool"]').forEach((input) => {
   input.addEventListener("change", () => {
     setEditTool(input.value);
@@ -170,6 +176,7 @@ els.editCloseButton.addEventListener("click", () => els.editModal.close());
 els.editUndoButton.addEventListener("click", undoEditPick);
 els.editApplyButton.addEventListener("click", applyEditResult);
 els.editCanvas.addEventListener("click", handleEditPick);
+els.fillBackgroundButton.addEventListener("click", fillEditBackgroundColor);
 els.invertSelectionButton.addEventListener("click", toggleSelectionInvert);
 els.finishPenButton.addEventListener("click", applyPenErase);
 els.clearPenButton.addEventListener("click", clearPenPath);
@@ -441,10 +448,10 @@ function clearEditModal() {
   ctx.clearRect(0, 0, els.editCanvas.width, els.editCanvas.height);
 }
 
-function updateEditMeta(removed = 0) {
+function updateEditMeta(removed = 0, detailText = "") {
   const sizeText = editItem?.blob ? formatBytes(editItem.blob.size) : "";
-  const removedText = removed ? ` · 本次 ${removed} px` : "";
-  els.editMeta.textContent = `${els.editCanvas.width} x ${els.editCanvas.height}${sizeText ? ` · ${sizeText}` : ""} · ${editPickCount} 次拾取${removedText}`;
+  const actionText = removed ? ` · 本次 ${removed} px` : detailText;
+  els.editMeta.textContent = `${els.editCanvas.width} x ${els.editCanvas.height}${sizeText ? ` · ${sizeText}` : ""} · ${editPickCount} 次编辑${actionText}`;
 }
 
 function updateEditUndoButton() {
@@ -802,6 +809,48 @@ function eraseStrokeToPoint(point) {
     });
   }
   eraserLastPoint = point;
+}
+
+function fillEditBackgroundColor() {
+  if (!editItem) return;
+  const rgb = parseHexColor(els.editFillColorInput.value);
+  if (!rgb) return;
+
+  const ctx = els.editCanvas.getContext("2d", { willReadFrequently: true });
+  const before = ctx.getImageData(0, 0, els.editCanvas.width, els.editCanvas.height);
+  const image = ctx.getImageData(0, 0, els.editCanvas.width, els.editCanvas.height);
+  const data = image.data;
+  let changed = 0;
+
+  for (let index = 0; index < data.length; index += 4) {
+    const alpha = data[index + 3];
+    if (alpha >= 255) continue;
+
+    const opacity = alpha / 255;
+    const backgroundOpacity = 1 - opacity;
+    data[index] = Math.round(data[index] * opacity + rgb.r * backgroundOpacity);
+    data[index + 1] = Math.round(data[index + 1] * opacity + rgb.g * backgroundOpacity);
+    data[index + 2] = Math.round(data[index + 2] * opacity + rgb.b * backgroundOpacity);
+    data[index + 3] = 255;
+    changed += 1;
+  }
+
+  if (!changed) return;
+  ctx.putImageData(image, 0, 0);
+  editUndoStack.push(before);
+  editPickCount += 1;
+  updateEditMeta(0, ` · 背景 ${els.editFillColorInput.value}`);
+  updateEditUndoButton();
+}
+
+function parseHexColor(color) {
+  const normalized = color.trim().replace(/^#/, "");
+  if (!/^[0-9a-f]{6}$/i.test(normalized)) return null;
+  return {
+    r: parseInt(normalized.slice(0, 2), 16),
+    g: parseInt(normalized.slice(2, 4), 16),
+    b: parseInt(normalized.slice(4, 6), 16),
+  };
 }
 
 function eraseBrushArea(canvas, centerX, centerY, radius, edgeStrength) {

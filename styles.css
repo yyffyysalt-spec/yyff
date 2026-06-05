@@ -745,6 +745,17 @@ figcaption {
   gap: 8px;
 }
 
+.edit-fill-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.edit-fill-field {
+  min-width: 0;
+}
+
 .small-button.is-active {
   border-color: rgba(15, 123, 104, 0.42);
   background: #e8f4ee;
@@ -933,6 +944,10 @@ figcaption {
 
   .pen-actions {
     justify-content: space-between;
+  }
+
+  .edit-fill-row {
+    grid-template-columns: 1fr;
   }
 
   .card-footer {
