@@ -886,10 +886,11 @@ function eraseBrushArea(canvas, centerX, centerY, radius, edgeStrength) {
 
   const image = ctx.getImageData(minX, minY, width, height);
   const data = image.data;
-  const softness = Math.max(0.08, Math.min(0.9, edgeStrength / 100));
-  const featherWidth = Math.max(1, radius * (0.08 + softness * 0.42));
+  const softness = Math.max(0, Math.min(1, edgeStrength / 100));
+  const featherWidth = Math.max(1, radius * (0.04 + softness * 0.72));
   const hardRadius = Math.max(0, radius - featherWidth);
-  const transparentCutoff = Math.round(120 + softness * 90);
+  const transparentCutoff = Math.round(6 + softness * 20);
+  const haloCutoff = Math.round(86 + softness * 44);
   let removed = 0;
 
   const brushMinX = Math.max(0, Math.floor(centerX - radius) - minX);
@@ -913,7 +914,8 @@ function eraseBrushArea(canvas, centerX, centerY, radius, edgeStrength) {
       const edgeProgress = distance <= hardRadius ? 0 : (distance - hardRadius) / featherWidth;
       const erasePower = 1 - smoothStep(0, 1, Math.max(0, Math.min(1, edgeProgress)));
       let nextAlpha = Math.max(0, Math.round(alpha * (1 - erasePower)));
-      if (nextAlpha <= transparentCutoff) nextAlpha = 0;
+      const whiteish = data[alphaIndex - 3] > 235 && data[alphaIndex - 2] > 235 && data[alphaIndex - 1] > 235;
+      if (nextAlpha <= transparentCutoff || (whiteish && nextAlpha <= haloCutoff)) nextAlpha = 0;
       if (nextAlpha < alpha) {
         data[alphaIndex] = nextAlpha;
         if (!nextAlpha) {
