@@ -186,6 +186,7 @@ els.editCanvasWrap.addEventListener("mousemove", updateEraserBrushPreview);
 els.editCanvasWrap.addEventListener("mouseenter", updateEraserBrushPreview);
 els.editCanvasWrap.addEventListener("mouseleave", hideEraserBrushPreview);
 els.editCanvasWrap.addEventListener("keydown", handleEditKeydown);
+els.editModal.addEventListener("keydown", handleEditUndoShortcut);
 window.addEventListener("mousemove", moveEditPan);
 window.addEventListener("mouseup", endEditPan);
 window.addEventListener("resize", () => {
@@ -908,6 +909,12 @@ function eraseBrushArea(canvas, centerX, centerY, radius, edgeStrength) {
 
 function handleEditKeydown(event) {
   if (!editItem) return;
+  if (isUndoShortcut(event)) {
+    event.preventDefault();
+    event.stopPropagation();
+    undoEditPick();
+    return;
+  }
   if (event.target === els.editToleranceRange || event.target === els.editEdgeRange || event.target === els.eraserSizeRange) return;
   const step = event.shiftKey ? 96 : 42;
   if (event.key === "+" || event.key === "=") {
@@ -932,6 +939,17 @@ function handleEditKeydown(event) {
     event.preventDefault();
     fitEditCanvasToView();
   }
+}
+
+function handleEditUndoShortcut(event) {
+  if (!editItem || !els.editModal.open || !isUndoShortcut(event)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  undoEditPick();
+}
+
+function isUndoShortcut(event) {
+  return (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "z";
 }
 
 function moveEditCanvasImage(dx, dy) {
