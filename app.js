@@ -173,7 +173,7 @@ document.querySelectorAll('input[name="editTool"]').forEach((input) => {
   });
 });
 els.editCloseButton.addEventListener("click", () => els.editModal.close());
-els.editUndoButton.addEventListener("click", undoEditPick);
+els.editUndoButton.addEventListener("click", undoEditStep);
 els.editApplyButton.addEventListener("click", applyEditResult);
 els.editCanvas.addEventListener("click", handleEditPick);
 els.fillBackgroundButton.addEventListener("click", fillEditBackgroundColor);
@@ -415,6 +415,11 @@ function undoEditPick() {
   updateEditUndoButton();
 }
 
+function undoEditStep() {
+  if (undoPenPathPoint()) return;
+  undoEditPick();
+}
+
 async function applyEditResult() {
   if (!editItem) return;
   copyCanvas(els.editCanvas, editItem.resultCanvas);
@@ -456,7 +461,8 @@ function updateEditMeta(removed = 0, detailText = "") {
 }
 
 function updateEditUndoButton() {
-  els.editUndoButton.disabled = editUndoStack.length === 0;
+  const hasPenPathUndo = editTool === "pen" && penPoints.length > 0;
+  els.editUndoButton.disabled = editUndoStack.length === 0 && !hasPenPathUndo;
 }
 
 function setEditTool(tool) {
@@ -477,6 +483,7 @@ function addPenPoint(x, y) {
   penPoints.push({ x, y });
   drawPenOverlay();
   updatePenButtons();
+  updateEditUndoButton();
 }
 
 function clearPenPath() {
@@ -484,6 +491,17 @@ function clearPenPath() {
   isSelectionInverted = false;
   clearPenOverlay();
   updatePenButtons();
+  updateEditUndoButton();
+}
+
+function undoPenPathPoint() {
+  if (editTool !== "pen" || !penPoints.length) return false;
+  penPoints.pop();
+  if (penPoints.length < 3) isSelectionInverted = false;
+  drawPenOverlay();
+  updatePenButtons();
+  updateEditUndoButton();
+  return true;
 }
 
 function updatePenButtons() {
@@ -493,6 +511,7 @@ function updatePenButtons() {
   els.invertSelectionButton.textContent = isSelectionInverted ? "已反转" : "反转选区";
   els.finishPenButton.disabled = !isPen || penPoints.length < 3;
   els.clearPenButton.disabled = !isPen || penPoints.length === 0;
+  updateEditUndoButton();
 }
 
 function toggleSelectionInvert() {
@@ -912,7 +931,7 @@ function handleEditKeydown(event) {
   if (isUndoShortcut(event)) {
     event.preventDefault();
     event.stopPropagation();
-    undoEditPick();
+    undoEditStep();
     return;
   }
   if (event.target === els.editToleranceRange || event.target === els.editEdgeRange || event.target === els.eraserSizeRange) return;
@@ -945,7 +964,7 @@ function handleEditUndoShortcut(event) {
   if (!editItem || !els.editModal.open || !isUndoShortcut(event)) return;
   event.preventDefault();
   event.stopPropagation();
-  undoEditPick();
+  undoEditStep();
 }
 
 function isUndoShortcut(event) {
