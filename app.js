@@ -875,8 +875,7 @@ function parseHexColor(color) {
 
 function eraseBrushArea(canvas, centerX, centerY, radius, edgeStrength) {
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  const edgeRadius = edgeStrength >= 72 ? 2 : 1;
-  const margin = Math.ceil(radius + edgeRadius + 2);
+  const margin = Math.ceil(radius + 2);
   const minX = Math.max(0, Math.floor(centerX - margin));
   const maxX = Math.min(canvas.width - 1, Math.ceil(centerX + margin));
   const minY = Math.max(0, Math.floor(centerY - margin));
@@ -887,9 +886,10 @@ function eraseBrushArea(canvas, centerX, centerY, radius, edgeStrength) {
 
   const image = ctx.getImageData(minX, minY, width, height);
   const data = image.data;
-  const mask = new Uint8Array(width * height);
-  const softness = Math.max(0.12, Math.min(0.82, edgeStrength / 100));
-  const softStart = radius * (1 - softness * 0.45);
+  const softness = Math.max(0.08, Math.min(0.9, edgeStrength / 100));
+  const featherWidth = Math.max(1, radius * (0.08 + softness * 0.42));
+  const hardRadius = Math.max(0, radius - featherWidth);
+  const transparentCutoff = Math.round(120 + softness * 90);
   let removed = 0;
 
   const brushMinX = Math.max(0, Math.floor(centerX - radius) - minX);
@@ -910,20 +910,30 @@ function eraseBrushArea(canvas, centerX, centerY, radius, edgeStrength) {
       const alpha = data[alphaIndex];
       if (!alpha) continue;
 
-      const fade = distance <= softStart ? 1 : 1 - (distance - softStart) / Math.max(1, radius - softStart);
-      const nextAlpha = Math.max(0, Math.round(alpha * (1 - fade)));
+      const edgeProgress = distance <= hardRadius ? 0 : (distance - hardRadius) / featherWidth;
+      const erasePower = 1 - smoothStep(0, 1, Math.max(0, Math.min(1, edgeProgress)));
+      let nextAlpha = Math.max(0, Math.round(alpha * (1 - erasePower)));
+      if (nextAlpha <= transparentCutoff) nextAlpha = 0;
       if (nextAlpha < alpha) {
         data[alphaIndex] = nextAlpha;
-        mask[pixel] = 1;
+        if (!nextAlpha) {
+          data[alphaIndex - 3] = 0;
+          data[alphaIndex - 2] = 0;
+          data[alphaIndex - 1] = 0;
+        }
         removed += 1;
       }
     }
   }
 
   if (!removed) return 0;
-  refineEditedEdges(data, mask, width, height, edgeStrength);
   ctx.putImageData(image, minX, minY);
   return removed;
+}
+
+function smoothStep(edge0, edge1, value) {
+  const t = Math.max(0, Math.min(1, (value - edge0) / Math.max(0.0001, edge1 - edge0)));
+  return t * t * (3 - 2 * t);
 }
 
 function handleEditKeydown(event) {
