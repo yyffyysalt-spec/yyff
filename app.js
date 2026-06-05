@@ -186,7 +186,7 @@ els.editCanvasWrap.addEventListener("mousemove", updateEraserBrushPreview);
 els.editCanvasWrap.addEventListener("mouseenter", updateEraserBrushPreview);
 els.editCanvasWrap.addEventListener("mouseleave", hideEraserBrushPreview);
 els.editCanvasWrap.addEventListener("keydown", handleEditKeydown);
-els.editModal.addEventListener("keydown", handleEditUndoShortcut);
+document.addEventListener("keydown", handleEditUndoShortcut);
 window.addEventListener("mousemove", moveEditPan);
 window.addEventListener("mouseup", endEditPan);
 window.addEventListener("resize", () => {
@@ -461,7 +461,7 @@ function updateEditMeta(removed = 0, detailText = "") {
 }
 
 function updateEditUndoButton() {
-  const hasPenPathUndo = editTool === "pen" && penPoints.length > 0;
+  const hasPenPathUndo = penPoints.length > 0;
   els.editUndoButton.disabled = editUndoStack.length === 0 && !hasPenPathUndo;
 }
 
@@ -495,7 +495,7 @@ function clearPenPath() {
 }
 
 function undoPenPathPoint() {
-  if (editTool !== "pen" || !penPoints.length) return false;
+  if (!penPoints.length) return false;
   penPoints.pop();
   if (penPoints.length < 3) isSelectionInverted = false;
   drawPenOverlay();
