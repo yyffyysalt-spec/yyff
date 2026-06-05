@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>批量抠图 + 高清放大</title>
-    <link rel="stylesheet" href="./styles.css?v=20260604-9" />
+    <link rel="stylesheet" href="./styles.css?v=20260605-1" />
   </head>
   <body>
     <main class="app-shell">
@@ -258,6 +258,16 @@
             <output id="eraserSizeOutput">28</output>
           </label>
           <input id="eraserSizeRange" type="range" min="8" max="120" step="1" value="28" />
+          <div class="edit-fill-row">
+            <label class="field color-field edit-fill-field">
+              <span>填充背景色</span>
+              <span class="color-row">
+                <input id="editFillColorInput" type="color" value="#ffffff" />
+                <span id="editFillColorText">#ffffff</span>
+              </span>
+            </label>
+            <button class="small-button" id="fillBackgroundButton" type="button">填充背景</button>
+          </div>
           <div class="pen-actions">
             <button class="small-button" id="invertSelectionButton" type="button" disabled>反转选区</button>
             <button class="small-button" id="finishPenButton" type="button" disabled>完成路径</button>
@@ -274,6 +284,6 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=20260604-9"></script>
+    <script src="./app.js?v=20260605-1"></script>
   </body>
 </html>
