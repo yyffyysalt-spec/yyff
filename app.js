@@ -3,6 +3,12 @@ const state = {
   isProcessing: false,
 };
 
+const compressorState = {
+  files: [],
+  results: [],
+  isProcessing: false,
+};
+
 const els = {
   fileInput: document.querySelector("#fileInput"),
   dropZone: document.querySelector("#dropZone"),
@@ -33,6 +39,15 @@ const els = {
   progressText: document.querySelector("#progressText"),
   progressBar: document.querySelector("#progressBar"),
   hintText: document.querySelector("#hintText"),
+  compressFileInput: document.querySelector("#compressFileInput"),
+  compressQualityRange: document.querySelector("#compressQualityRange"),
+  compressQualityOutput: document.querySelector("#compressQualityOutput"),
+  compressMaxEdgeSelect: document.querySelector("#compressMaxEdgeSelect"),
+  compressFormatSelect: document.querySelector("#compressFormatSelect"),
+  compressButton: document.querySelector("#compressButton"),
+  compressDownloadButton: document.querySelector("#compressDownloadButton"),
+  compressStatus: document.querySelector("#compressStatus"),
+  compressList: document.querySelector("#compressList"),
   template: document.querySelector("#imageCardTemplate"),
   previewModal: document.querySelector("#previewModal"),
   previewImage: document.querySelector("#previewImage"),
@@ -114,6 +129,15 @@ els.toleranceRange.addEventListener("input", () => {
   els.toleranceOutput.value = els.toleranceRange.value;
 });
 
+els.compressQualityRange.addEventListener("input", () => {
+  els.compressQualityOutput.value = els.compressQualityRange.value;
+});
+els.compressFileInput.addEventListener("change", (event) => {
+  setCompressionFiles([...event.target.files]);
+  els.compressFileInput.value = "";
+});
+els.compressButton.addEventListener("click", compressSelectedFiles);
+els.compressDownloadButton.addEventListener("click", downloadCompressedFiles);
 els.modelSelect.addEventListener("change", () => {
   updateApiControls();
   updateUi();
@@ -222,6 +246,173 @@ els.checkerToggle.addEventListener("change", () => {
     item.card.querySelector(".processed-figure").classList.toggle("checker", els.checkerToggle.checked);
   });
 });
+
+function setCompressionFiles(files) {
+  compressorState.files = files.filter((file) => file.type.startsWith("image/") || /\.gif$/i.test(file.name));
+  compressorState.results = [];
+  updateCompressionUi();
+}
+
+async function compressSelectedFiles() {
+  if (!compressorState.files.length || compressorState.isProcessing) return;
+  compressorState.isProcessing = true;
+  compressorState.results = [];
+  updateCompressionUi("压缩中...");
+
+  for (const file of compressorState.files) {
+    try {
+      const result = await compressImageFile(file);
+      compressorState.results.push(result);
+    } catch (error) {
+      compressorState.results.push({
+        file,
+        error: error?.message || "压缩失败",
+      });
+    }
+    updateCompressionUi("压缩中...");
+  }
+
+  compressorState.isProcessing = false;
+  updateCompressionUi();
+}
+
+async function compressImageFile(file) {
+  const canvas = await fileToCanvas(file);
+  const maxEdge = Number(els.compressMaxEdgeSelect.value);
+  const quality = Number(els.compressQualityRange.value) / 100;
+  const scaledCanvas = resizeCanvasToMaxEdge(canvas, maxEdge);
+  const mimeType = getCompressionMime(file, els.compressFormatSelect.value);
+  const blob = await canvasToBlob(scaledCanvas, mimeType, quality);
+  const outputName = `${fileBaseName(file.name)}-compressed.${extensionForMime(mimeType)}`;
+
+  return {
+    file,
+    blob,
+    outputName,
+    width: scaledCanvas.width,
+    height: scaledCanvas.height,
+  };
+}
+
+async function fileToCanvas(file) {
+  try {
+    return bitmapToCanvas(await createImageBitmap(file));
+  } catch (error) {
+    return imageElementToCanvas(file);
+  }
+}
+
+function bitmapToCanvas(bitmap) {
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  canvas.getContext("2d").drawImage(bitmap, 0, 0);
+  bitmap.close?.();
+  return canvas;
+}
+
+function imageElementToCanvas(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      canvas.getContext("2d").drawImage(image, 0, 0);
+      URL.revokeObjectURL(url);
+      resolve(canvas);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("图片读取失败"));
+    };
+    image.src = url;
+  });
+}
+
+function resizeCanvasToMaxEdge(canvas, maxEdge) {
+  if (!maxEdge || Math.max(canvas.width, canvas.height) <= maxEdge) return canvas;
+  const scale = maxEdge / Math.max(canvas.width, canvas.height);
+  const output = document.createElement("canvas");
+  output.width = Math.max(1, Math.round(canvas.width * scale));
+  output.height = Math.max(1, Math.round(canvas.height * scale));
+  const ctx = output.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(canvas, 0, 0, output.width, output.height);
+  return output;
+}
+
+function getCompressionMime(file, selectedFormat) {
+  if (selectedFormat !== "auto") return selectedFormat;
+  if (/jpe?g/i.test(file.type)) return "image/jpeg";
+  return "image/webp";
+}
+
+function extensionForMime(mimeType) {
+  if (mimeType === "image/jpeg") return "jpg";
+  if (mimeType === "image/png") return "png";
+  return "webp";
+}
+
+function fileBaseName(name) {
+  return name.replace(/\.[^.]+$/, "") || "image";
+}
+
+function updateCompressionUi(statusText = "") {
+  const successful = compressorState.results.filter((result) => result.blob);
+  const failed = compressorState.results.filter((result) => result.error);
+  const selectedText = compressorState.files.length ? `${compressorState.files.length} 个文件` : "待选择";
+
+  els.compressStatus.textContent =
+    statusText ||
+    (compressorState.results.length
+      ? `${successful.length} 个完成${failed.length ? `，${failed.length} 个失败` : ""}`
+      : selectedText);
+  els.compressButton.disabled = !compressorState.files.length || compressorState.isProcessing;
+  els.compressDownloadButton.disabled = !successful.length || compressorState.isProcessing;
+  els.compressList.replaceChildren();
+
+  for (const file of compressorState.files) {
+    const result = compressorState.results.find((item) => item.file === file);
+    const row = document.createElement("div");
+    row.className = "compress-item";
+    const name = document.createElement("strong");
+    name.textContent = file.name;
+    const meta = document.createElement("span");
+
+    if (!result) {
+      meta.textContent = compressorState.isProcessing ? "等待中" : formatBytes(file.size);
+    } else if (result.error) {
+      meta.className = "is-error";
+      meta.textContent = result.error;
+    } else {
+      const saved = Math.max(0, 1 - result.blob.size / Math.max(1, file.size));
+      meta.className = "is-ok";
+      meta.textContent = `${formatBytes(file.size)} -> ${formatBytes(result.blob.size)} · ${Math.round(saved * 100)}%`;
+    }
+
+    row.append(name, meta);
+    els.compressList.append(row);
+  }
+}
+
+async function downloadCompressedFiles() {
+  const ready = compressorState.results.filter((result) => result.blob);
+  if (!ready.length) return;
+  if (ready.length === 1) {
+    downloadBlob(ready[0].blob, ready[0].outputName);
+    return;
+  }
+  const zipBlob = await createZip(
+    ready.map((result) => ({
+      name: result.outputName,
+      blob: result.blob,
+    })),
+  );
+  downloadBlob(zipBlob, `compressed-images-${dateStamp()}.zip`);
+}
 
 async function addFiles(files) {
   const imageFiles = files.filter((file) => file.type.startsWith("image/"));
@@ -2115,12 +2306,12 @@ async function downloadAll() {
   downloadBlob(zipBlob, `batch-cutout-upscale-${dateStamp()}.zip`);
 }
 
-function canvasToBlob(canvas) {
+function canvasToBlob(canvas, type = "image/png", quality) {
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
       if (blob) resolve(blob);
       else reject(new Error("Canvas export failed"));
-    }, "image/png");
+    }, type, quality);
   });
 }
 

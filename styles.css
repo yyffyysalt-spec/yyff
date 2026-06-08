@@ -519,6 +519,115 @@ button:disabled {
   object-fit: contain;
 }
 
+.compress-panel {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(248, 251, 248, 0.86);
+}
+
+.compress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.compress-head h3 {
+  color: #405149;
+  font-weight: 820;
+}
+
+.compress-head span,
+.compress-list {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.compress-controls {
+  display: grid;
+  grid-template-columns: minmax(128px, 0.9fr) minmax(150px, 1fr) minmax(118px, 0.8fr) minmax(108px, 0.8fr) auto auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.compress-upload {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  border: 1px dashed #9cb9ad;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--accent-strong);
+  font-size: 13px;
+  font-weight: 820;
+  cursor: pointer;
+}
+
+.compress-upload input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.compact-field {
+  gap: 6px;
+}
+
+.compact-field input[type="range"] {
+  margin: 0;
+}
+
+.compact-field output {
+  justify-self: end;
+  margin-top: -22px;
+  font-size: 12px;
+}
+
+.compress-list {
+  display: grid;
+  gap: 6px;
+}
+
+.compress-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid rgba(216, 224, 218, 0.76);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.compress-item strong,
+.compress-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compress-item strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.compress-item span.is-ok {
+  color: var(--accent-strong);
+}
+
+.compress-item span.is-error {
+  color: #b91c1c;
+}
+
 .progress-wrap {
   flex: 0 0 min(260px, 34vw);
   display: grid;
@@ -1043,6 +1152,10 @@ figcaption {
     align-items: flex-start;
   }
 
+  .compress-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .preview-toolbar {
     align-items: flex-start;
   }
@@ -1108,5 +1221,13 @@ figcaption {
 
   .free-link-buttons a {
     flex: 1 1 130px;
+  }
+
+  .compress-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .compress-item {
+    grid-template-columns: 1fr;
   }
 }

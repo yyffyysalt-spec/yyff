@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>批量抠图 + 高清放大</title>
-    <link rel="stylesheet" href="./styles.css?v=20260608-12" />
+    <link rel="stylesheet" href="./styles.css?v=20260608-13" />
   </head>
   <body>
     <main class="app-shell">
@@ -172,6 +172,45 @@
             </div>
           </section>
 
+          <section class="compress-panel" aria-label="图片和 GIF 压缩">
+            <div class="compress-head">
+              <h3>图片 / GIF 压缩</h3>
+              <span id="compressStatus">待选择</span>
+            </div>
+            <div class="compress-controls">
+              <label class="compress-upload">
+                <input id="compressFileInput" type="file" accept="image/*,.gif" multiple />
+                <span>选择图片</span>
+              </label>
+              <label class="field compact-field">
+                <span>质量</span>
+                <input id="compressQualityRange" type="range" min="35" max="95" step="5" value="75" />
+                <output id="compressQualityOutput">75</output>
+              </label>
+              <label class="field compact-field">
+                <span>最大边长</span>
+                <select id="compressMaxEdgeSelect">
+                  <option value="0">原尺寸</option>
+                  <option value="1600" selected>1600px</option>
+                  <option value="1200">1200px</option>
+                  <option value="800">800px</option>
+                </select>
+              </label>
+              <label class="field compact-field">
+                <span>格式</span>
+                <select id="compressFormatSelect">
+                  <option value="auto" selected>智能</option>
+                  <option value="image/webp">WebP</option>
+                  <option value="image/jpeg">JPG</option>
+                  <option value="image/png">PNG</option>
+                </select>
+              </label>
+              <button class="small-button" id="compressButton" type="button" disabled>开始压缩</button>
+              <button class="small-button" id="compressDownloadButton" type="button" disabled>下载</button>
+            </div>
+            <div class="compress-list" id="compressList"></div>
+          </section>
+
           <div class="stage-header">
             <div>
               <h2>任务列表</h2>
@@ -316,6 +355,6 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=20260608-12"></script>
+    <script src="./app.js?v=20260608-13"></script>
   </body>
 </html>
