@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>批量抠图 + 高清放大</title>
-    <link rel="stylesheet" href="./styles.css?v=20260608-2" />
+    <link rel="stylesheet" href="./styles.css?v=20260608-3" />
   </head>
   <body>
     <main class="app-shell">
@@ -50,6 +50,7 @@
               <span>抠图模型</span>
               <select id="modelSelect">
                 <option value="local-fast" selected>本地极速</option>
+                <option value="pixian-ai">Pixian.ai 精抠</option>
               </select>
             </label>
             <label class="field">
@@ -76,6 +77,21 @@
                 <option value="2">明显</option>
                 <option value="3">强力</option>
               </select>
+            </label>
+          </div>
+
+          <div class="api-panel" id="pixianPanel" hidden>
+            <label class="field">
+              <span>Pixian API Id</span>
+              <input id="pixianApiIdInput" type="text" autocomplete="off" placeholder="API Id" />
+            </label>
+            <label class="field">
+              <span>Pixian API Secret</span>
+              <input id="pixianApiSecretInput" type="password" autocomplete="off" placeholder="API Secret" />
+            </label>
+            <label class="toggle">
+              <input id="pixianTestToggle" type="checkbox" checked />
+              <span>测试模式</span>
             </label>
           </div>
 
@@ -278,6 +294,6 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=20260608-2"></script>
+    <script src="./app.js?v=20260608-3"></script>
   </body>
 </html>
