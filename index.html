@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>批量抠图 + 高清放大</title>
-    <link rel="stylesheet" href="./styles.css?v=20260608-3" />
+    <link rel="stylesheet" href="./styles.css?v=20260608-4" />
   </head>
   <body>
     <main class="app-shell">
@@ -81,13 +81,17 @@
           </div>
 
           <div class="api-panel" id="pixianPanel" hidden>
+            <p class="api-help">
+              Pixian 需要 API Id 和 Secret。
+              <a href="https://pixian.ai/api#quickstart" target="_blank" rel="noreferrer">获取 Pixian API Key</a>
+            </p>
             <label class="field">
               <span>Pixian API Id</span>
-              <input id="pixianApiIdInput" type="text" autocomplete="off" placeholder="API Id" />
+              <input id="pixianApiIdInput" type="text" autocomplete="off" placeholder="从 Pixian 账号复制 API Id" />
             </label>
             <label class="field">
               <span>Pixian API Secret</span>
-              <input id="pixianApiSecretInput" type="password" autocomplete="off" placeholder="API Secret" />
+              <input id="pixianApiSecretInput" type="password" autocomplete="off" placeholder="从 Pixian 账号复制 API Secret" />
             </label>
             <label class="toggle">
               <input id="pixianTestToggle" type="checkbox" checked />
@@ -294,6 +298,6 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=20260608-3"></script>
+    <script src="./app.js?v=20260608-4"></script>
   </body>
 </html>

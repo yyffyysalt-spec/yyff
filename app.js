@@ -1727,7 +1727,7 @@ function updateUi() {
   els.clearButton.disabled = total === 0 || state.isProcessing;
   els.queueStatus.textContent = total ? `${total} 张图片` : "待上传";
   els.hintText.textContent = missingPixianCredentials
-    ? "填写 Pixian API Id 和 Secret 后可以开始处理。"
+    ? "Pixian 需要 API Id 和 Secret；可在左侧入口获取并填入。"
     : total
       ? "调整左侧参数后可以重新处理，结果会覆盖当前预览。"
       : "上传图片后会在这里显示原图与处理结果。";
