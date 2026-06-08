@@ -17,6 +17,8 @@ const els = {
   pixianPanel: document.querySelector("#pixianPanel"),
   pixianApiIdInput: document.querySelector("#pixianApiIdInput"),
   pixianApiSecretInput: document.querySelector("#pixianApiSecretInput"),
+  pixianCheckCreditsButton: document.querySelector("#pixianCheckCreditsButton"),
+  pixianCreditStatus: document.querySelector("#pixianCreditStatus"),
   scaleSelect: document.querySelector("#scaleSelect"),
   featherSelect: document.querySelector("#featherSelect"),
   shrinkSelect: document.querySelector("#shrinkSelect"),
@@ -74,6 +76,7 @@ const MODEL_PRESETS = {
   },
 };
 const PIXIAN_API_URL = "https://api.pixian.ai/api/v2/remove-background";
+const PIXIAN_ACCOUNT_URL = "https://api.pixian.ai/api/v2/account";
 const PIXIAN_CREDENTIALS_KEY = "imageBatchStudio.pixianCredentials.v1";
 let previewUrl = null;
 let previewItem = null;
@@ -113,9 +116,11 @@ document.querySelectorAll('input[name="mode"]').forEach((input) => {
 [els.pixianApiIdInput, els.pixianApiSecretInput].forEach((input) => {
   input.addEventListener("input", () => {
     savePixianCredentials();
+    clearPixianCreditStatus();
     updateUi();
   });
 });
+els.pixianCheckCreditsButton.addEventListener("click", checkPixianCredits);
 loadPixianCredentials();
 updatePixianControls();
 updateBackgroundControls();
@@ -295,7 +300,7 @@ async function processQueue() {
       setCardStatus(item, "已完成", "is-done");
     } catch (error) {
       console.error(error);
-      setCardStatus(item, "处理失败", "is-error");
+      setCardStatus(item, getProcessingErrorText(error), "is-error");
     }
     done += 1;
     updateProgress(done, state.items.length);
@@ -1042,8 +1047,9 @@ function hideEraserBrushPreview() {
 }
 
 async function processItem(item, options) {
-  let canvas =
-    shouldUsePixian(options) ? await removeBackgroundWithPixian(item.file, options) : canvasFromBitmap(item.bitmap);
+  let canvas = shouldUsePixian(options)
+    ? await processWithPixian(item.file, options)
+    : canvasFromBitmap(item.bitmap);
 
   if (options.mode !== "upscale" && !shouldUsePixian(options)) {
     canvas = removeBackground(canvas, options);
@@ -1090,6 +1096,8 @@ function updatePixianControls() {
   els.pixianPanel.hidden = !isPixian;
   els.pixianApiIdInput.disabled = !isPixian;
   els.pixianApiSecretInput.disabled = !isPixian;
+  els.pixianCheckCreditsButton.disabled = !isPixian || !hasPixianCredentials();
+  if (!isPixian) clearPixianCreditStatus();
 }
 
 function getSelectedMode() {
@@ -1102,6 +1110,13 @@ function needsPixianCredentials() {
 
 function hasPixianCredentials() {
   return Boolean(els.pixianApiIdInput.value.trim() && els.pixianApiSecretInput.value.trim());
+}
+
+function getPixianCredentialsFromInputs() {
+  return {
+    pixianApiId: els.pixianApiIdInput.value.trim(),
+    pixianApiSecret: els.pixianApiSecretInput.value.trim(),
+  };
 }
 
 function loadPixianCredentials() {
@@ -1135,7 +1150,7 @@ async function removeBackgroundWithPixian(file, options) {
   const response = await fetch(PIXIAN_API_URL, {
     method: "POST",
     headers: {
-      Authorization: `Basic ${btoa(`${options.pixianApiId}:${options.pixianApiSecret}`)}`,
+      Authorization: getPixianAuthHeader(options),
     },
     body: formData,
   });
@@ -1146,6 +1161,91 @@ async function removeBackgroundWithPixian(file, options) {
   }
 
   return blobToCanvas(await response.blob());
+}
+
+async function processWithPixian(file, options) {
+  const account = await getPixianAccountStatus(options);
+  updatePixianCreditStatus(account);
+  ensurePixianCreditsAvailable(account);
+  return removeBackgroundWithPixian(file, options);
+}
+
+async function checkPixianCredits() {
+  if (!hasPixianCredentials()) {
+    setPixianCreditStatus("先填写 Pixian API Id 和 Secret。", "is-error");
+    updateUi();
+    return;
+  }
+
+  els.pixianCheckCreditsButton.disabled = true;
+  setPixianCreditStatus("正在检查 Pixian 额度...", "");
+  try {
+    const account = await getPixianAccountStatus(getPixianCredentialsFromInputs());
+    updatePixianCreditStatus(account);
+  } catch (error) {
+    setPixianCreditStatus(getProcessingErrorText(error), "is-error");
+  } finally {
+    updateUi();
+  }
+}
+
+async function getPixianAccountStatus(options) {
+  const response = await fetch(PIXIAN_ACCOUNT_URL, {
+    method: "GET",
+    headers: {
+      Authorization: getPixianAuthHeader(options),
+    },
+  });
+
+  if (!response.ok) {
+    const message = await readPixianError(response);
+    throw new Error(message || `Pixian account request failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+function ensurePixianCreditsAvailable(account) {
+  const credits = Number(account?.credits ?? 0);
+  if (account?.state === "dormant") {
+    throw new Error("Pixian 账户休眠，请购买新的额度包。");
+  }
+  if (!Number.isFinite(credits) || credits <= 0) {
+    throw new Error("Pixian 额度不足，请购买 Pixian 额度。");
+  }
+}
+
+function updatePixianCreditStatus(account) {
+  const credits = Number(account?.credits ?? 0);
+  const creditsText = Number.isFinite(credits) ? credits.toFixed(3).replace(/\\.0+$/, "") : "--";
+  const stateText = account?.state === "active" ? "可用" : "不可用";
+  const className = account?.state === "active" && credits > 0 ? "is-ok" : "is-error";
+  setPixianCreditStatus(`Pixian 额度：${creditsText}，状态：${stateText}`, className);
+}
+
+function setPixianCreditStatus(text, className) {
+  els.pixianCreditStatus.textContent = text;
+  els.pixianCreditStatus.className = `api-status ${className}`;
+}
+
+function clearPixianCreditStatus() {
+  setPixianCreditStatus("", "");
+}
+
+function getPixianAuthHeader(options) {
+  return `Basic ${btoa(`${options.pixianApiId}:${options.pixianApiSecret}`)}`;
+}
+
+function getProcessingErrorText(error) {
+  const message = String(error?.message || error || "处理失败").trim();
+  if (/credit|credits|quota|dormant|payment|purchase/i.test(message)) {
+    return message.includes("Pixian") ? message : `Pixian 额度不足：${message}`;
+  }
+  if (/auth|credential|secret|password|unauthorized|forbidden|401|403/i.test(message)) {
+    return "Pixian 认证失败，请检查 API Id 和 Secret。";
+  }
+  if (/Pixian/i.test(message)) return message;
+  return message || "处理失败";
 }
 
 async function readPixianError(response) {
@@ -1710,6 +1810,7 @@ function copyCanvas(source, target) {
 function setCardStatus(item, text, className) {
   item.status.className = `card-status ${className}`;
   item.status.textContent = text;
+  item.status.title = text;
 }
 
 function updateUi() {
@@ -1718,6 +1819,8 @@ function updateUi() {
   els.emptyState.classList.toggle("is-hidden", total > 0);
   const missingPixianCredentials = total > 0 && needsPixianCredentials() && !hasPixianCredentials();
   els.processButton.disabled = total === 0 || state.isProcessing || missingPixianCredentials;
+  els.pixianCheckCreditsButton.disabled =
+    els.modelSelect.value !== "pixian-ai" || state.isProcessing || !hasPixianCredentials();
   els.downloadButton.disabled = completed === 0 || state.isProcessing;
   els.clearButton.disabled = total === 0 || state.isProcessing;
   els.queueStatus.textContent = total ? `${total} 张图片` : "待上传";

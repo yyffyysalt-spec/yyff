@@ -333,6 +333,32 @@ select {
   text-decoration: underline;
 }
 
+.api-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.api-actions a {
+  text-decoration: none;
+}
+
+.api-status {
+  min-height: 18px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.api-status.is-ok {
+  color: var(--accent-strong);
+}
+
+.api-status.is-error {
+  color: #b91c1c;
+}
+
 .slider-row {
   display: flex;
   justify-content: space-between;
