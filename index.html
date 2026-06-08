@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>批量抠图 + 高清放大</title>
-    <link rel="stylesheet" href="./styles.css?v=20260608-5" />
+    <link rel="stylesheet" href="./styles.css?v=20260608-6" />
   </head>
   <body>
     <main class="app-shell">
@@ -84,6 +84,7 @@
             <p class="api-help">
               Pixian 需要 API Id 和 Secret。
               <a href="https://pixian.ai/api#quickstart" target="_blank" rel="noreferrer">获取 Pixian API Key</a>
+              <span>正式模式不会加测试水印，会消耗 Pixian 额度。</span>
             </p>
             <label class="field">
               <span>Pixian API Id</span>
@@ -92,10 +93,6 @@
             <label class="field">
               <span>Pixian API Secret</span>
               <input id="pixianApiSecretInput" type="password" autocomplete="off" placeholder="从 Pixian 账号复制 API Secret" />
-            </label>
-            <label class="toggle">
-              <input id="pixianTestToggle" type="checkbox" checked />
-              <span>测试模式</span>
             </label>
           </div>
 
@@ -298,6 +295,6 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=20260608-5"></script>
+    <script src="./app.js?v=20260608-6"></script>
   </body>
 </html>

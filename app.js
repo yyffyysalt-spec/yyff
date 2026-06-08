@@ -17,7 +17,6 @@ const els = {
   pixianPanel: document.querySelector("#pixianPanel"),
   pixianApiIdInput: document.querySelector("#pixianApiIdInput"),
   pixianApiSecretInput: document.querySelector("#pixianApiSecretInput"),
-  pixianTestToggle: document.querySelector("#pixianTestToggle"),
   scaleSelect: document.querySelector("#scaleSelect"),
   featherSelect: document.querySelector("#featherSelect"),
   shrinkSelect: document.querySelector("#shrinkSelect"),
@@ -111,7 +110,7 @@ els.modelSelect.addEventListener("change", () => {
 document.querySelectorAll('input[name="mode"]').forEach((input) => {
   input.addEventListener("change", updateUi);
 });
-[els.pixianApiIdInput, els.pixianApiSecretInput, els.pixianTestToggle].forEach((input) => {
+[els.pixianApiIdInput, els.pixianApiSecretInput].forEach((input) => {
   input.addEventListener("input", () => {
     savePixianCredentials();
     updateUi();
@@ -1079,7 +1078,6 @@ function readOptions() {
     sharpen: els.sharpenToggle.checked,
     pixianApiId: els.pixianApiIdInput.value.trim(),
     pixianApiSecret: els.pixianApiSecretInput.value.trim(),
-    pixianTest: els.pixianTestToggle.checked,
   };
 }
 
@@ -1092,7 +1090,6 @@ function updatePixianControls() {
   els.pixianPanel.hidden = !isPixian;
   els.pixianApiIdInput.disabled = !isPixian;
   els.pixianApiSecretInput.disabled = !isPixian;
-  els.pixianTestToggle.disabled = !isPixian;
 }
 
 function getSelectedMode() {
@@ -1112,9 +1109,9 @@ function loadPixianCredentials() {
     const saved = JSON.parse(localStorage.getItem(PIXIAN_CREDENTIALS_KEY) || "{}");
     els.pixianApiIdInput.value = saved.apiId || "";
     els.pixianApiSecretInput.value = saved.apiSecret || "";
-    els.pixianTestToggle.checked = saved.test !== false;
   } catch (error) {
-    els.pixianTestToggle.checked = true;
+    els.pixianApiIdInput.value = "";
+    els.pixianApiSecretInput.value = "";
   }
 }
 
@@ -1122,7 +1119,6 @@ function savePixianCredentials() {
   const credentials = {
     apiId: els.pixianApiIdInput.value.trim(),
     apiSecret: els.pixianApiSecretInput.value.trim(),
-    test: els.pixianTestToggle.checked,
   };
   localStorage.setItem(PIXIAN_CREDENTIALS_KEY, JSON.stringify(credentials));
 }
@@ -1134,7 +1130,6 @@ async function removeBackgroundWithPixian(file, options) {
 
   const formData = new FormData();
   formData.append("image", file, file.name);
-  formData.append("test", options.pixianTest ? "true" : "false");
   formData.append("result.crop_to_foreground", options.trim ? "true" : "false");
 
   const response = await fetch(PIXIAN_API_URL, {
