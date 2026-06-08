@@ -40,6 +40,7 @@ const els = {
   previewDownloadButton: document.querySelector("#previewDownloadButton"),
   previewCloseButton: document.querySelector("#previewCloseButton"),
   editModal: document.querySelector("#editModal"),
+  editBackgroundCanvas: document.querySelector("#editBackgroundCanvas"),
   editCanvas: document.querySelector("#editCanvas"),
   penOverlayCanvas: document.querySelector("#penOverlayCanvas"),
   eraserBrushPreview: document.querySelector("#eraserBrushPreview"),
@@ -56,6 +57,7 @@ const els = {
   editFillColorInput: document.querySelector("#editFillColorInput"),
   editFillColorText: document.querySelector("#editFillColorText"),
   fillBackgroundButton: document.querySelector("#fillBackgroundButton"),
+  clearBackgroundButton: document.querySelector("#clearBackgroundButton"),
   invertSelectionButton: document.querySelector("#invertSelectionButton"),
   finishPenButton: document.querySelector("#finishPenButton"),
   clearPenButton: document.querySelector("#clearPenButton"),
@@ -97,6 +99,7 @@ let eraserUndoSnapshot = null;
 let eraserRemovedTotal = 0;
 let eraserPreviewPointer = null;
 let eraserLastPoint = null;
+let editBackgroundColor = null;
 
 els.toleranceRange.addEventListener("input", () => {
   els.toleranceOutput.value = els.toleranceRange.value;
@@ -182,6 +185,7 @@ els.editUndoButton.addEventListener("click", undoEditStep);
 els.editApplyButton.addEventListener("click", applyEditResult);
 els.editCanvas.addEventListener("click", handleEditPick);
 els.fillBackgroundButton.addEventListener("click", fillEditBackgroundColor);
+els.clearBackgroundButton.addEventListener("click", clearEditBackgroundColor);
 els.invertSelectionButton.addEventListener("click", toggleSelectionInvert);
 els.finishPenButton.addEventListener("click", applyPenErase);
 els.clearPenButton.addEventListener("click", clearPenPath);
@@ -253,6 +257,8 @@ function createItem(file, url, bitmap) {
     editButton,
     downloadButton,
     blob: null,
+    editorSubjectCanvas: null,
+    editorBackgroundColor: null,
     outputName: makeOutputName(file.name),
   };
 
@@ -278,6 +284,8 @@ async function processQueue() {
   state.isProcessing = true;
   for (const item of state.items) {
     item.blob = null;
+    item.editorSubjectCanvas = null;
+    item.editorBackgroundColor = null;
     item.editButton.disabled = true;
     item.downloadButton.disabled = true;
     item.resultCanvas.classList.remove("is-previewable");
@@ -348,18 +356,26 @@ function openEditor(item) {
   eraserRemovedTotal = 0;
   eraserPreviewPointer = null;
   eraserLastPoint = null;
+  editBackgroundColor = item.editorBackgroundColor || null;
   setEditTool("pick");
+  els.editBackgroundCanvas.width = item.resultCanvas.width;
+  els.editBackgroundCanvas.height = item.resultCanvas.height;
   els.editCanvas.width = item.resultCanvas.width;
   els.editCanvas.height = item.resultCanvas.height;
   els.penOverlayCanvas.width = item.resultCanvas.width;
   els.penOverlayCanvas.height = item.resultCanvas.height;
+  els.editBackgroundCanvas.style.width = "";
+  els.editBackgroundCanvas.style.height = "";
+  els.editBackgroundCanvas.style.transform = "";
   els.editCanvas.style.width = "";
   els.editCanvas.style.height = "";
   els.editCanvas.style.transform = "";
   els.penOverlayCanvas.style.width = "";
   els.penOverlayCanvas.style.height = "";
   els.penOverlayCanvas.style.transform = "";
-  els.editCanvas.getContext("2d").drawImage(item.resultCanvas, 0, 0);
+  const sourceCanvas = item.editorSubjectCanvas || item.resultCanvas;
+  els.editCanvas.getContext("2d").drawImage(sourceCanvas, 0, 0);
+  drawEditBackground();
   clearPenOverlay();
   els.editTitle.textContent = item.outputName;
   updateEditMeta();
@@ -427,7 +443,10 @@ function undoEditStep() {
 
 async function applyEditResult() {
   if (!editItem) return;
-  copyCanvas(els.editCanvas, editItem.resultCanvas);
+  const outputCanvas = composeEditResultCanvas();
+  copyCanvas(outputCanvas, editItem.resultCanvas);
+  editItem.editorSubjectCanvas = cloneCanvas(els.editCanvas);
+  editItem.editorBackgroundColor = editBackgroundColor;
   editItem.blob = await canvasToBlob(editItem.resultCanvas);
   editItem.resultCanvas.classList.add("is-previewable");
   editItem.downloadButton.disabled = false;
@@ -447,14 +466,20 @@ function clearEditModal() {
   eraserRemovedTotal = 0;
   eraserPreviewPointer = null;
   eraserLastPoint = null;
+  editBackgroundColor = null;
   hideEraserBrushPreview();
   clearPenOverlay();
+  els.editBackgroundCanvas.style.width = "";
+  els.editBackgroundCanvas.style.height = "";
+  els.editBackgroundCanvas.style.transform = "";
   els.editCanvasStage.style.width = "";
   els.editCanvasStage.style.height = "";
   editViewOffset = { x: 0, y: 0 };
   applyEditCanvasTransform();
   updateEditUndoButton();
   updatePenButtons();
+  const bgCtx = els.editBackgroundCanvas.getContext("2d");
+  bgCtx.clearRect(0, 0, els.editBackgroundCanvas.width, els.editBackgroundCanvas.height);
   const ctx = els.editCanvas.getContext("2d");
   ctx.clearRect(0, 0, els.editCanvas.width, els.editCanvas.height);
 }
@@ -468,6 +493,7 @@ function updateEditMeta(removed = 0, detailText = "") {
 function updateEditUndoButton() {
   const hasPenPathUndo = penPoints.length > 0;
   els.editUndoButton.disabled = editUndoStack.length === 0 && !hasPenPathUndo;
+  els.clearBackgroundButton.disabled = !editBackgroundColor;
 }
 
 function setEditTool(tool) {
@@ -665,6 +691,8 @@ function applyEditViewScale(anchor = null) {
   const newWidth = Math.max(1, Math.round(els.editCanvas.width * displayScale));
   const newHeight = Math.max(1, Math.round(els.editCanvas.height * displayScale));
 
+  els.editBackgroundCanvas.style.width = `${newWidth}px`;
+  els.editBackgroundCanvas.style.height = `${newHeight}px`;
   els.editCanvas.style.width = `${newWidth}px`;
   els.editCanvas.style.height = `${newHeight}px`;
   els.penOverlayCanvas.style.width = `${newWidth}px`;
@@ -684,6 +712,7 @@ function applyEditViewScale(anchor = null) {
 
 function applyEditCanvasTransform() {
   const transform = `translate(-50%, -50%) translate(${Math.round(editViewOffset.x)}px, ${Math.round(editViewOffset.y)}px)`;
+  els.editBackgroundCanvas.style.transform = transform;
   els.editCanvas.style.transform = transform;
   els.penOverlayCanvas.style.transform = transform;
 }
@@ -854,31 +883,39 @@ function fillEditBackgroundColor() {
   const rgb = parseHexColor(els.editFillColorInput.value);
   if (!rgb) return;
 
-  const ctx = els.editCanvas.getContext("2d", { willReadFrequently: true });
-  const before = ctx.getImageData(0, 0, els.editCanvas.width, els.editCanvas.height);
-  const image = ctx.getImageData(0, 0, els.editCanvas.width, els.editCanvas.height);
-  const data = image.data;
-  let changed = 0;
-
-  for (let index = 0; index < data.length; index += 4) {
-    const alpha = data[index + 3];
-    if (alpha >= 255) continue;
-
-    const opacity = alpha / 255;
-    const backgroundOpacity = 1 - opacity;
-    data[index] = Math.round(data[index] * opacity + rgb.r * backgroundOpacity);
-    data[index + 1] = Math.round(data[index + 1] * opacity + rgb.g * backgroundOpacity);
-    data[index + 2] = Math.round(data[index + 2] * opacity + rgb.b * backgroundOpacity);
-    data[index + 3] = 255;
-    changed += 1;
-  }
-
-  if (!changed) return;
-  ctx.putImageData(image, 0, 0);
-  editUndoStack.push(before);
-  editPickCount += 1;
+  editBackgroundColor = els.editFillColorInput.value;
+  drawEditBackground();
   updateEditMeta(0, ` · 背景 ${els.editFillColorInput.value}`);
   updateEditUndoButton();
+}
+
+function clearEditBackgroundColor() {
+  if (!editItem || !editBackgroundColor) return;
+  editBackgroundColor = null;
+  drawEditBackground();
+  updateEditMeta(0, " · 已取消背景");
+  updateEditUndoButton();
+}
+
+function drawEditBackground() {
+  const ctx = els.editBackgroundCanvas.getContext("2d");
+  ctx.clearRect(0, 0, els.editBackgroundCanvas.width, els.editBackgroundCanvas.height);
+  if (!editBackgroundColor) return;
+  ctx.fillStyle = editBackgroundColor;
+  ctx.fillRect(0, 0, els.editBackgroundCanvas.width, els.editBackgroundCanvas.height);
+}
+
+function composeEditResultCanvas() {
+  const canvas = document.createElement("canvas");
+  canvas.width = els.editCanvas.width;
+  canvas.height = els.editCanvas.height;
+  const ctx = canvas.getContext("2d");
+  if (editBackgroundColor) {
+    ctx.fillStyle = editBackgroundColor;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  ctx.drawImage(els.editCanvas, 0, 0);
+  return canvas;
 }
 
 function parseHexColor(color) {
@@ -1805,6 +1842,12 @@ function copyCanvas(source, target) {
   const ctx = target.getContext("2d");
   ctx.clearRect(0, 0, target.width, target.height);
   ctx.drawImage(source, 0, 0);
+}
+
+function cloneCanvas(source) {
+  const canvas = document.createElement("canvas");
+  copyCanvas(source, canvas);
+  return canvas;
 }
 
 function setCardStatus(item, text, className) {

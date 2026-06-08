@@ -817,7 +817,7 @@ figcaption {
 
 .edit-fill-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
   align-items: end;
 }
@@ -888,6 +888,7 @@ figcaption {
   outline: 0;
 }
 
+#editBackgroundCanvas,
 #editCanvas {
   position: absolute;
   top: 50%;
@@ -899,6 +900,12 @@ figcaption {
   outline: 0;
   box-shadow: none;
   z-index: 1;
+}
+
+#editBackgroundCanvas {
+  cursor: default;
+  pointer-events: none;
+  z-index: 0;
 }
 
 .edit-canvas-wrap[data-tool="eraser"],

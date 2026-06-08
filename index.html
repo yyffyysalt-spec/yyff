@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>批量抠图 + 高清放大</title>
-    <link rel="stylesheet" href="./styles.css?v=20260608-7" />
+    <link rel="stylesheet" href="./styles.css?v=20260608-8" />
   </head>
   <body>
     <main class="app-shell">
@@ -283,6 +283,7 @@
               </span>
             </label>
             <button class="small-button" id="fillBackgroundButton" type="button">填充背景</button>
+            <button class="small-button" id="clearBackgroundButton" type="button" disabled>取消背景</button>
           </div>
           <div class="pen-actions">
             <button class="small-button" id="invertSelectionButton" type="button" disabled>反转选区</button>
@@ -292,6 +293,7 @@
         </div>
         <div class="edit-canvas-wrap checker" tabindex="0" aria-label="编辑区图像，可滚轮缩放、拖动移动、方向键移动">
           <div class="edit-canvas-stage">
+            <canvas id="editBackgroundCanvas" aria-hidden="true"></canvas>
             <canvas id="editCanvas" aria-label="智能拾取编辑画布"></canvas>
             <canvas id="penOverlayCanvas" aria-hidden="true"></canvas>
             <div id="eraserBrushPreview" aria-hidden="true" hidden></div>
@@ -300,6 +302,6 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=20260608-7"></script>
+    <script src="./app.js?v=20260608-8"></script>
   </body>
 </html>
