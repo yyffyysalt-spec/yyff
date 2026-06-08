@@ -309,6 +309,10 @@ select {
   background: #f8fbf8;
 }
 
+.api-panel[hidden] {
+  display: none;
+}
+
 .api-help {
   margin: 0;
   color: var(--muted);
