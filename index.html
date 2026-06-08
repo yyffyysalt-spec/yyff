@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>批量抠图 + 高清放大</title>
-    <link rel="stylesheet" href="./styles.css?v=20260608-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260608-2" />
   </head>
   <body>
     <main class="app-shell">
@@ -50,12 +50,6 @@
               <span>抠图模型</span>
               <select id="modelSelect">
                 <option value="local-fast" selected>本地极速</option>
-                <option value="local-clean">本地精细</option>
-                <option value="local-strong">本地强力</option>
-                <option value="birefnet-lite">BiRefNet Lite</option>
-                <option value="birefnet">BiRefNet 通用</option>
-                <option value="rmbg-2">RMBG-2.0 精抠</option>
-                <option value="modnet">MODNet 人像</option>
               </select>
             </label>
             <label class="field">
@@ -114,7 +108,7 @@
 
           <div class="toggle-list">
             <label class="toggle">
-              <input id="trimToggle" type="checkbox" checked />
+              <input id="trimToggle" type="checkbox" />
               <span>自动裁掉透明边</span>
             </label>
             <label class="toggle">
@@ -284,6 +278,6 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=20260608-1"></script>
+    <script src="./app.js?v=20260608-2"></script>
   </body>
 </html>

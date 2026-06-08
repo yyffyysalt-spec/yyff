@@ -65,30 +65,6 @@ const MODEL_PRESETS = {
     matting: "standard",
     toleranceScale: 0.92,
   },
-  "local-clean": {
-    matting: "similar-safe",
-    toleranceScale: 1,
-  },
-  "local-strong": {
-    matting: "similar-strong",
-    toleranceScale: 1.08,
-  },
-  "birefnet-lite": {
-    matting: "similar-safe",
-    toleranceScale: 0.96,
-  },
-  birefnet: {
-    matting: "similar-strong",
-    toleranceScale: 1.04,
-  },
-  "rmbg-2": {
-    matting: "similar-strong",
-    toleranceScale: 1.1,
-  },
-  modnet: {
-    matting: "similar-safe",
-    toleranceScale: 0.9,
-  },
 };
 let previewUrl = null;
 let previewItem = null;
