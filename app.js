@@ -535,8 +535,8 @@ function drawPenOverlay() {
   const fixedLineWidth = 3 / displayScale;
   const fixedDash = 9 / displayScale;
   const fixedGap = 7 / displayScale;
-  const fixedPointRadius = 15 / displayScale;
-  const fixedPointLineWidth = 4 / displayScale;
+  const fixedPointRadius = 3 / displayScale;
+  const fixedPointLineWidth = 0.8 / displayScale;
 
   ctx.save();
   ctx.lineWidth = fixedLineWidth;
