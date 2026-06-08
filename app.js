@@ -19,6 +19,10 @@ const els = {
   pixianApiSecretInput: document.querySelector("#pixianApiSecretInput"),
   pixianCheckCreditsButton: document.querySelector("#pixianCheckCreditsButton"),
   pixianCreditStatus: document.querySelector("#pixianCreditStatus"),
+  koukoutuPanel: document.querySelector("#koukoutuPanel"),
+  koukoutuApiKeyInput: document.querySelector("#koukoutuApiKeyInput"),
+  koukoutuCheckCreditsButton: document.querySelector("#koukoutuCheckCreditsButton"),
+  koukoutuCreditStatus: document.querySelector("#koukoutuCreditStatus"),
   scaleSelect: document.querySelector("#scaleSelect"),
   featherSelect: document.querySelector("#featherSelect"),
   shrinkSelect: document.querySelector("#shrinkSelect"),
@@ -76,10 +80,17 @@ const MODEL_PRESETS = {
     matting: "pixian",
     toleranceScale: 1,
   },
+  koukoutu: {
+    matting: "koukoutu",
+    toleranceScale: 1,
+  },
 };
 const PIXIAN_API_URL = "https://api.pixian.ai/api/v2/remove-background";
 const PIXIAN_ACCOUNT_URL = "https://api.pixian.ai/api/v2/account";
 const PIXIAN_CREDENTIALS_KEY = "imageBatchStudio.pixianCredentials.v1";
+const KOUKOUTU_API_URL = "https://sync.koukoutu.com/v1/create";
+const KOUKOUTU_SCORE_URL = "https://async.koukoutu.com/v1/score";
+const KOUKOUTU_CREDENTIALS_KEY = "imageBatchStudio.koukoutuCredentials.v1";
 let previewUrl = null;
 let previewItem = null;
 let editItem = null;
@@ -110,7 +121,7 @@ els.customColorInput.addEventListener("input", () => {
   els.customColorText.textContent = els.customColorInput.value;
 });
 els.modelSelect.addEventListener("change", () => {
-  updatePixianControls();
+  updateApiControls();
   updateUi();
 });
 document.querySelectorAll('input[name="mode"]').forEach((input) => {
@@ -124,8 +135,15 @@ document.querySelectorAll('input[name="mode"]').forEach((input) => {
   });
 });
 els.pixianCheckCreditsButton.addEventListener("click", checkPixianCredits);
+els.koukoutuApiKeyInput.addEventListener("input", () => {
+  saveKoukoutuCredentials();
+  clearKoukoutuCreditStatus();
+  updateUi();
+});
+els.koukoutuCheckCreditsButton.addEventListener("click", checkKoukoutuCredits);
 loadPixianCredentials();
-updatePixianControls();
+loadKoukoutuCredentials();
+updateApiControls();
 updateBackgroundControls();
 
 els.fileInput.addEventListener("change", (event) => {
@@ -1084,11 +1102,11 @@ function hideEraserBrushPreview() {
 }
 
 async function processItem(item, options) {
-  let canvas = shouldUsePixian(options)
-    ? await processWithPixian(item.file, options)
+  let canvas = shouldUseRemoteMatting(options)
+    ? await processWithRemoteMatting(item.file, options)
     : canvasFromBitmap(item.bitmap);
 
-  if (options.mode !== "upscale" && !shouldUsePixian(options)) {
+  if (options.mode !== "upscale" && !shouldUseRemoteMatting(options)) {
     canvas = removeBackground(canvas, options);
   }
 
@@ -1121,11 +1139,31 @@ function readOptions() {
     sharpen: els.sharpenToggle.checked,
     pixianApiId: els.pixianApiIdInput.value.trim(),
     pixianApiSecret: els.pixianApiSecretInput.value.trim(),
+    koukoutuApiKey: els.koukoutuApiKeyInput.value.trim(),
   };
+}
+
+function shouldUseRemoteMatting(options) {
+  return shouldUsePixian(options) || shouldUseKoukoutu(options);
+}
+
+function processWithRemoteMatting(file, options) {
+  if (shouldUsePixian(options)) return processWithPixian(file, options);
+  if (shouldUseKoukoutu(options)) return processWithKoukoutu(file, options);
+  throw new Error("未选择可用的云端抠图模型。");
 }
 
 function shouldUsePixian(options) {
   return options.model === "pixian-ai" && options.mode !== "upscale";
+}
+
+function shouldUseKoukoutu(options) {
+  return options.model === "koukoutu" && options.mode !== "upscale";
+}
+
+function updateApiControls() {
+  updatePixianControls();
+  updateKoukoutuControls();
 }
 
 function updatePixianControls() {
@@ -1137,6 +1175,14 @@ function updatePixianControls() {
   if (!isPixian) clearPixianCreditStatus();
 }
 
+function updateKoukoutuControls() {
+  const isKoukoutu = els.modelSelect.value === "koukoutu";
+  els.koukoutuPanel.hidden = !isKoukoutu;
+  els.koukoutuApiKeyInput.disabled = !isKoukoutu;
+  els.koukoutuCheckCreditsButton.disabled = !isKoukoutu || !hasKoukoutuCredentials();
+  if (!isKoukoutu) clearKoukoutuCreditStatus();
+}
+
 function getSelectedMode() {
   return document.querySelector('input[name="mode"]:checked').value;
 }
@@ -1145,14 +1191,28 @@ function needsPixianCredentials() {
   return els.modelSelect.value === "pixian-ai" && getSelectedMode() !== "upscale";
 }
 
+function needsKoukoutuCredentials() {
+  return els.modelSelect.value === "koukoutu" && getSelectedMode() !== "upscale";
+}
+
 function hasPixianCredentials() {
   return Boolean(els.pixianApiIdInput.value.trim() && els.pixianApiSecretInput.value.trim());
+}
+
+function hasKoukoutuCredentials() {
+  return Boolean(els.koukoutuApiKeyInput.value.trim());
 }
 
 function getPixianCredentialsFromInputs() {
   return {
     pixianApiId: els.pixianApiIdInput.value.trim(),
     pixianApiSecret: els.pixianApiSecretInput.value.trim(),
+  };
+}
+
+function getKoukoutuCredentialsFromInputs() {
+  return {
+    koukoutuApiKey: els.koukoutuApiKeyInput.value.trim(),
   };
 }
 
@@ -1173,6 +1233,22 @@ function savePixianCredentials() {
     apiSecret: els.pixianApiSecretInput.value.trim(),
   };
   localStorage.setItem(PIXIAN_CREDENTIALS_KEY, JSON.stringify(credentials));
+}
+
+function loadKoukoutuCredentials() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(KOUKOUTU_CREDENTIALS_KEY) || "{}");
+    els.koukoutuApiKeyInput.value = saved.apiKey || "";
+  } catch (error) {
+    els.koukoutuApiKeyInput.value = "";
+  }
+}
+
+function saveKoukoutuCredentials() {
+  const credentials = {
+    apiKey: els.koukoutuApiKeyInput.value.trim(),
+  };
+  localStorage.setItem(KOUKOUTU_CREDENTIALS_KEY, JSON.stringify(credentials));
 }
 
 async function removeBackgroundWithPixian(file, options) {
@@ -1226,6 +1302,72 @@ async function checkPixianCredits() {
   }
 }
 
+async function removeBackgroundWithKoukoutu(file, options) {
+  if (!options.koukoutuApiKey) {
+    throw new Error("Koukoutu API key is missing");
+  }
+
+  const formData = new FormData();
+  formData.append("model_key", "background-removal");
+  formData.append("image_file", file, file.name);
+  formData.append("output_format", "png");
+  formData.append("crop", options.trim ? "1" : "0");
+  formData.append("border", getKoukoutuBorderLevel(options));
+  formData.append("stamp_crop", "0");
+  formData.append("response", "bytes");
+
+  const response = await fetch(KOUKOUTU_API_URL, {
+    method: "POST",
+    headers: {
+      "X-API-Key": options.koukoutuApiKey,
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const message = await readKoukoutuError(response);
+    throw new Error(message || `Koukoutu request failed: ${response.status}`);
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  if (/json/i.test(contentType)) {
+    const data = await response.json();
+    const imageUrl = data?.data?.url || data?.data?.image_url || data?.url;
+    if (!imageUrl) throw new Error(data?.message || "抠抠图没有返回图片结果。");
+    const imageResponse = await fetch(imageUrl);
+    if (!imageResponse.ok) throw new Error("抠抠图结果图片下载失败。");
+    return blobToCanvas(await imageResponse.blob());
+  }
+
+  return blobToCanvas(await response.blob());
+}
+
+async function processWithKoukoutu(file, options) {
+  const account = await getKoukoutuAccountStatus(options);
+  updateKoukoutuCreditStatus(account);
+  ensureKoukoutuCreditsAvailable(account);
+  return removeBackgroundWithKoukoutu(file, options);
+}
+
+async function checkKoukoutuCredits() {
+  if (!hasKoukoutuCredentials()) {
+    setKoukoutuCreditStatus("先填写抠抠图 API Key。", "is-error");
+    updateUi();
+    return;
+  }
+
+  els.koukoutuCheckCreditsButton.disabled = true;
+  setKoukoutuCreditStatus("正在检查抠抠图积分...", "");
+  try {
+    const account = await getKoukoutuAccountStatus(getKoukoutuCredentialsFromInputs());
+    updateKoukoutuCreditStatus(account);
+  } catch (error) {
+    setKoukoutuCreditStatus(getProcessingErrorText(error), "is-error");
+  } finally {
+    updateUi();
+  }
+}
+
 async function getPixianAccountStatus(options) {
   const response = await fetch(PIXIAN_ACCOUNT_URL, {
     method: "GET",
@@ -1242,6 +1384,22 @@ async function getPixianAccountStatus(options) {
   return response.json();
 }
 
+async function getKoukoutuAccountStatus(options) {
+  const response = await fetch(KOUKOUTU_SCORE_URL, {
+    method: "GET",
+    headers: {
+      "X-API-Key": options.koukoutuApiKey,
+    },
+  });
+
+  if (!response.ok) {
+    const message = await readKoukoutuError(response);
+    throw new Error(message || `Koukoutu account request failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
 function ensurePixianCreditsAvailable(account) {
   const credits = Number(account?.credits ?? 0);
   if (account?.state === "dormant") {
@@ -1249,6 +1407,19 @@ function ensurePixianCreditsAvailable(account) {
   }
   if (!Number.isFinite(credits) || credits <= 0) {
     throw new Error("Pixian 额度不足，请购买 Pixian 额度。");
+  }
+}
+
+function ensureKoukoutuCreditsAvailable(account) {
+  const data = account?.data || account;
+  const credits = Number(data?.credits ?? 0);
+  const vipCredits = Number(data?.vip_credits ?? 0);
+  const total = (Number.isFinite(credits) ? credits : 0) + (Number.isFinite(vipCredits) ? vipCredits : 0);
+  if (account?.code && Number(account.code) !== 200) {
+    throw new Error(account.message || "抠抠图积分查询失败。");
+  }
+  if (total <= 0) {
+    throw new Error("抠抠图积分不足，请购买积分。");
   }
 }
 
@@ -1260,27 +1431,58 @@ function updatePixianCreditStatus(account) {
   setPixianCreditStatus(`Pixian 额度：${creditsText}，状态：${stateText}`, className);
 }
 
+function updateKoukoutuCreditStatus(account) {
+  const data = account?.data || account;
+  const credits = Number(data?.credits ?? 0);
+  const vipCredits = Number(data?.vip_credits ?? 0);
+  const total = (Number.isFinite(credits) ? credits : 0) + (Number.isFinite(vipCredits) ? vipCredits : 0);
+  const creditsText = Number.isFinite(total) ? total.toFixed(2).replace(/\.0+$/, "") : "--";
+  const className = total > 0 ? "is-ok" : "is-error";
+  setKoukoutuCreditStatus(`抠抠图积分：${creditsText}`, className);
+}
+
 function setPixianCreditStatus(text, className) {
   els.pixianCreditStatus.textContent = text;
   els.pixianCreditStatus.className = `api-status ${className}`;
+}
+
+function setKoukoutuCreditStatus(text, className) {
+  els.koukoutuCreditStatus.textContent = text;
+  els.koukoutuCreditStatus.className = `api-status ${className}`;
 }
 
 function clearPixianCreditStatus() {
   setPixianCreditStatus("", "");
 }
 
+function clearKoukoutuCreditStatus() {
+  setKoukoutuCreditStatus("", "");
+}
+
 function getPixianAuthHeader(options) {
   return `Basic ${btoa(`${options.pixianApiId}:${options.pixianApiSecret}`)}`;
 }
 
+function getKoukoutuBorderLevel(options) {
+  if (options.feather >= 4 || options.shrink >= 2) return "2";
+  if (options.feather >= 2 || options.shrink >= 1) return "1";
+  return "0";
+}
+
 function getProcessingErrorText(error) {
   const message = String(error?.message || error || "处理失败").trim();
+  if (/failed to fetch|networkerror|load failed/i.test(message) && els.modelSelect.value === "koukoutu") {
+    return "抠抠图接口暂不支持网页直连，需要配置中转服务。";
+  }
   if (/credit|credits|quota|dormant|payment|purchase/i.test(message)) {
+    if (/Koukoutu|抠抠图/i.test(message)) return message.replace(/Koukoutu/g, "抠抠图");
     return message.includes("Pixian") ? message : `Pixian 额度不足：${message}`;
   }
   if (/auth|credential|secret|password|unauthorized|forbidden|401|403/i.test(message)) {
+    if (/Koukoutu|抠抠图|api key/i.test(message)) return "抠抠图认证失败，请检查 API Key。";
     return "Pixian 认证失败，请检查 API Id 和 Secret。";
   }
+  if (/Koukoutu/i.test(message)) return message.replace(/Koukoutu/g, "抠抠图");
   if (/Pixian/i.test(message)) return message;
   return message || "处理失败";
 }
@@ -1290,6 +1492,16 @@ async function readPixianError(response) {
   try {
     const data = JSON.parse(text);
     return data?.error?.message || text;
+  } catch (error) {
+    return text;
+  }
+}
+
+async function readKoukoutuError(response) {
+  const text = await response.text();
+  try {
+    const data = JSON.parse(text);
+    return data?.message || data?.error?.message || text;
   } catch (error) {
     return text;
   }
@@ -1861,14 +2073,20 @@ function updateUi() {
   const completed = state.items.filter((item) => item.blob).length;
   els.emptyState.classList.toggle("is-hidden", total > 0);
   const missingPixianCredentials = total > 0 && needsPixianCredentials() && !hasPixianCredentials();
-  els.processButton.disabled = total === 0 || state.isProcessing || missingPixianCredentials;
+  const missingKoukoutuCredentials = total > 0 && needsKoukoutuCredentials() && !hasKoukoutuCredentials();
+  const missingApiCredentials = missingPixianCredentials || missingKoukoutuCredentials;
+  els.processButton.disabled = total === 0 || state.isProcessing || missingApiCredentials;
   els.pixianCheckCreditsButton.disabled =
     els.modelSelect.value !== "pixian-ai" || state.isProcessing || !hasPixianCredentials();
+  els.koukoutuCheckCreditsButton.disabled =
+    els.modelSelect.value !== "koukoutu" || state.isProcessing || !hasKoukoutuCredentials();
   els.downloadButton.disabled = completed === 0 || state.isProcessing;
   els.clearButton.disabled = total === 0 || state.isProcessing;
   els.queueStatus.textContent = total ? `${total} 张图片` : "待上传";
-  els.hintText.textContent = missingPixianCredentials
-    ? "Pixian 需要 API Id 和 Secret；可在左侧入口获取并填入。"
+  els.hintText.textContent = missingApiCredentials
+    ? missingKoukoutuCredentials
+      ? "抠抠图需要 API Key；可在左侧入口获取并填入。"
+      : "Pixian 需要 API Id 和 Secret；可在左侧入口获取并填入。"
     : total
       ? "调整左侧参数后可以重新处理，结果会覆盖当前预览。"
       : "上传图片后会在这里显示原图与处理结果。";

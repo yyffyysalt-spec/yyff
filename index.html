@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>批量抠图 + 高清放大</title>
-    <link rel="stylesheet" href="./styles.css?v=20260608-8" />
+    <link rel="stylesheet" href="./styles.css?v=20260608-9" />
   </head>
   <body>
     <main class="app-shell">
@@ -51,6 +51,7 @@
               <select id="modelSelect">
                 <option value="local-fast" selected>本地极速</option>
                 <option value="pixian-ai">Pixian.ai</option>
+                <option value="koukoutu">抠抠图</option>
               </select>
             </label>
             <label class="field">
@@ -99,6 +100,24 @@
               <a class="small-button" href="https://pixian.ai/pricing" target="_blank" rel="noreferrer">购买 Pixian 额度</a>
             </div>
             <p class="api-status" id="pixianCreditStatus" aria-live="polite"></p>
+          </div>
+
+          <div class="api-panel" id="koukoutuPanel" hidden>
+            <p class="api-help">
+              抠抠图需要 API Key。
+              <a href="https://www.koukoutu.com/user/dev" target="_blank" rel="noreferrer">获取抠抠图 API Key</a>
+              <span>同步抠图会消耗抠抠图积分。</span>
+              <span>如果浏览器提示无法连接，需要使用中转服务。</span>
+            </p>
+            <label class="field">
+              <span>抠抠图 API Key</span>
+              <input id="koukoutuApiKeyInput" type="password" autocomplete="off" placeholder="从抠抠图账号复制 API Key" />
+            </label>
+            <div class="api-actions">
+              <button class="small-button" id="koukoutuCheckCreditsButton" type="button">检查积分</button>
+              <a class="small-button" href="https://www.koukoutu.com/price" target="_blank" rel="noreferrer">购买积分</a>
+            </div>
+            <p class="api-status" id="koukoutuCreditStatus" aria-live="polite"></p>
           </div>
 
           <div class="control-group">
@@ -302,6 +321,6 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=20260608-8"></script>
+    <script src="./app.js?v=20260608-9"></script>
   </body>
 </html>
