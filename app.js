@@ -14,6 +14,10 @@ const els = {
   toleranceRange: document.querySelector("#toleranceRange"),
   toleranceOutput: document.querySelector("#toleranceOutput"),
   modelSelect: document.querySelector("#modelSelect"),
+  pixianPanel: document.querySelector("#pixianPanel"),
+  pixianApiIdInput: document.querySelector("#pixianApiIdInput"),
+  pixianApiSecretInput: document.querySelector("#pixianApiSecretInput"),
+  pixianTestToggle: document.querySelector("#pixianTestToggle"),
   scaleSelect: document.querySelector("#scaleSelect"),
   featherSelect: document.querySelector("#featherSelect"),
   shrinkSelect: document.querySelector("#shrinkSelect"),
@@ -65,7 +69,13 @@ const MODEL_PRESETS = {
     matting: "standard",
     toleranceScale: 0.92,
   },
+  "pixian-ai": {
+    matting: "pixian",
+    toleranceScale: 1,
+  },
 };
+const PIXIAN_API_URL = "https://api.pixian.ai/api/v2/remove-background";
+const PIXIAN_CREDENTIALS_KEY = "imageBatchStudio.pixianCredentials.v1";
 let previewUrl = null;
 let previewItem = null;
 let editItem = null;
@@ -94,6 +104,21 @@ els.backgroundSelect.addEventListener("change", updateBackgroundControls);
 els.customColorInput.addEventListener("input", () => {
   els.customColorText.textContent = els.customColorInput.value;
 });
+els.modelSelect.addEventListener("change", () => {
+  updatePixianControls();
+  updateUi();
+});
+document.querySelectorAll('input[name="mode"]').forEach((input) => {
+  input.addEventListener("change", updateUi);
+});
+[els.pixianApiIdInput, els.pixianApiSecretInput, els.pixianTestToggle].forEach((input) => {
+  input.addEventListener("input", () => {
+    savePixianCredentials();
+    updateUi();
+  });
+});
+loadPixianCredentials();
+updatePixianControls();
 updateBackgroundControls();
 
 els.fileInput.addEventListener("change", (event) => {
@@ -262,7 +287,7 @@ async function processQueue() {
     setCardStatus(item, "处理中", "is-working");
     try {
       await nextFrame();
-      const outputCanvas = processBitmap(item.bitmap, options);
+      const outputCanvas = await processItem(item, options);
       copyCanvas(outputCanvas, item.resultCanvas);
       item.blob = await canvasToBlob(outputCanvas);
       item.editButton.disabled = false;
@@ -1017,13 +1042,15 @@ function hideEraserBrushPreview() {
   els.eraserBrushPreview.hidden = true;
 }
 
-function processBitmap(bitmap, options) {
-  let canvas = canvasFromBitmap(bitmap);
+async function processItem(item, options) {
+  let canvas =
+    shouldUsePixian(options) ? await removeBackgroundWithPixian(item.file, options) : canvasFromBitmap(item.bitmap);
 
-  if (options.mode !== "upscale") {
+  if (options.mode !== "upscale" && !shouldUsePixian(options)) {
     canvas = removeBackground(canvas, options);
-    if (options.trim) canvas = trimTransparent(canvas);
   }
+
+  if (options.mode !== "upscale" && options.trim) canvas = trimTransparent(canvas);
 
   if (options.mode !== "cutout") {
     const safeScale = getSafeScale(canvas, options.scale);
@@ -1050,7 +1077,90 @@ function readOptions() {
     backgroundColor: getSelectedBackgroundColor(),
     trim: els.trimToggle.checked,
     sharpen: els.sharpenToggle.checked,
+    pixianApiId: els.pixianApiIdInput.value.trim(),
+    pixianApiSecret: els.pixianApiSecretInput.value.trim(),
+    pixianTest: els.pixianTestToggle.checked,
   };
+}
+
+function shouldUsePixian(options) {
+  return options.model === "pixian-ai" && options.mode !== "upscale";
+}
+
+function updatePixianControls() {
+  const isPixian = els.modelSelect.value === "pixian-ai";
+  els.pixianPanel.hidden = !isPixian;
+  els.pixianApiIdInput.disabled = !isPixian;
+  els.pixianApiSecretInput.disabled = !isPixian;
+  els.pixianTestToggle.disabled = !isPixian;
+}
+
+function getSelectedMode() {
+  return document.querySelector('input[name="mode"]:checked').value;
+}
+
+function needsPixianCredentials() {
+  return els.modelSelect.value === "pixian-ai" && getSelectedMode() !== "upscale";
+}
+
+function hasPixianCredentials() {
+  return Boolean(els.pixianApiIdInput.value.trim() && els.pixianApiSecretInput.value.trim());
+}
+
+function loadPixianCredentials() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PIXIAN_CREDENTIALS_KEY) || "{}");
+    els.pixianApiIdInput.value = saved.apiId || "";
+    els.pixianApiSecretInput.value = saved.apiSecret || "";
+    els.pixianTestToggle.checked = saved.test !== false;
+  } catch (error) {
+    els.pixianTestToggle.checked = true;
+  }
+}
+
+function savePixianCredentials() {
+  const credentials = {
+    apiId: els.pixianApiIdInput.value.trim(),
+    apiSecret: els.pixianApiSecretInput.value.trim(),
+    test: els.pixianTestToggle.checked,
+  };
+  localStorage.setItem(PIXIAN_CREDENTIALS_KEY, JSON.stringify(credentials));
+}
+
+async function removeBackgroundWithPixian(file, options) {
+  if (!options.pixianApiId || !options.pixianApiSecret) {
+    throw new Error("Pixian API credentials are missing");
+  }
+
+  const formData = new FormData();
+  formData.append("image", file, file.name);
+  formData.append("test", options.pixianTest ? "true" : "false");
+  formData.append("result.crop_to_foreground", options.trim ? "true" : "false");
+
+  const response = await fetch(PIXIAN_API_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${btoa(`${options.pixianApiId}:${options.pixianApiSecret}`)}`,
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const message = await readPixianError(response);
+    throw new Error(message || `Pixian request failed: ${response.status}`);
+  }
+
+  return blobToCanvas(await response.blob());
+}
+
+async function readPixianError(response) {
+  const text = await response.text();
+  try {
+    const data = JSON.parse(text);
+    return data?.error?.message || text;
+  } catch (error) {
+    return text;
+  }
 }
 
 function updateBackgroundControls() {
@@ -1076,6 +1186,13 @@ function canvasFromBitmap(bitmap) {
   canvas.height = bitmap.height;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   ctx.drawImage(bitmap, 0, 0);
+  return canvas;
+}
+
+async function blobToCanvas(blob) {
+  const bitmap = await createImageBitmap(blob);
+  const canvas = canvasFromBitmap(bitmap);
+  if (typeof bitmap.close === "function") bitmap.close();
   return canvas;
 }
 
@@ -1604,13 +1721,16 @@ function updateUi() {
   const total = state.items.length;
   const completed = state.items.filter((item) => item.blob).length;
   els.emptyState.classList.toggle("is-hidden", total > 0);
-  els.processButton.disabled = total === 0 || state.isProcessing;
+  const missingPixianCredentials = total > 0 && needsPixianCredentials() && !hasPixianCredentials();
+  els.processButton.disabled = total === 0 || state.isProcessing || missingPixianCredentials;
   els.downloadButton.disabled = completed === 0 || state.isProcessing;
   els.clearButton.disabled = total === 0 || state.isProcessing;
   els.queueStatus.textContent = total ? `${total} 张图片` : "待上传";
-  els.hintText.textContent = total
-    ? "调整左侧参数后可以重新处理，结果会覆盖当前预览。"
-    : "上传图片后会在这里显示原图与处理结果。";
+  els.hintText.textContent = missingPixianCredentials
+    ? "填写 Pixian API Id 和 Secret 后可以开始处理。"
+    : total
+      ? "调整左侧参数后可以重新处理，结果会覆盖当前预览。"
+      : "上传图片后会在这里显示原图与处理结果。";
   updateProgress(completed, total);
 }
 

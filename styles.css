@@ -289,6 +289,26 @@ select {
   padding: 0 12px;
 }
 
+.field input[type="text"],
+.field input[type="password"] {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  padding: 0 12px;
+}
+
+.api-panel {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbf8;
+}
+
 .slider-row {
   display: flex;
   justify-content: space-between;
