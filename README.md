@@ -38,13 +38,13 @@
 
 GitHub Pages 是静态网页，不能直接运行后端接口。抠抠图接口在浏览器直连时可能被跨域限制拦截，所以项目里提供了 `koukoutu-proxy-worker.js` 作为中转接口代码。
 
-使用方式：
+当前网页已内置 Cloudflare Worker 中转地址：
 
-1. 在 Cloudflare Worker 新建一个 Worker。
-2. 把 `koukoutu-proxy-worker.js` 的内容复制进去并部署。
-3. 得到类似 `https://你的中转接口.workers.dev` 的地址。
-4. 在网页选择 `抠抠图`，把这个地址填入 `中转接口地址`。
-5. 填入抠抠图 API Key 后即可检查积分和处理图片。
+```text
+https://young-art-be70.ste611003.workers.dev
+```
+
+在网页选择 `抠抠图` 后，只需要填入抠抠图 API Key，即可检查积分和处理图片。后续如果要更换 Worker 地址，修改 `app.js` 里的 `KOUKOUTU_PROXY_URL` 即可。
 
 ## 推荐的生产级模型
 

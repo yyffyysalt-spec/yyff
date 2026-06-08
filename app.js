@@ -20,7 +20,6 @@ const els = {
   pixianCheckCreditsButton: document.querySelector("#pixianCheckCreditsButton"),
   pixianCreditStatus: document.querySelector("#pixianCreditStatus"),
   koukoutuPanel: document.querySelector("#koukoutuPanel"),
-  koukoutuProxyUrlInput: document.querySelector("#koukoutuProxyUrlInput"),
   koukoutuApiKeyInput: document.querySelector("#koukoutuApiKeyInput"),
   koukoutuCheckCreditsButton: document.querySelector("#koukoutuCheckCreditsButton"),
   koukoutuCreditStatus: document.querySelector("#koukoutuCreditStatus"),
@@ -91,6 +90,7 @@ const PIXIAN_ACCOUNT_URL = "https://api.pixian.ai/api/v2/account";
 const PIXIAN_CREDENTIALS_KEY = "imageBatchStudio.pixianCredentials.v1";
 const KOUKOUTU_API_URL = "https://sync.koukoutu.com/v1/create";
 const KOUKOUTU_SCORE_URL = "https://async.koukoutu.com/v1/score";
+const KOUKOUTU_PROXY_URL = "https://young-art-be70.ste611003.workers.dev";
 const KOUKOUTU_CREDENTIALS_KEY = "imageBatchStudio.koukoutuCredentials.v1";
 let previewUrl = null;
 let previewItem = null;
@@ -136,12 +136,10 @@ document.querySelectorAll('input[name="mode"]').forEach((input) => {
   });
 });
 els.pixianCheckCreditsButton.addEventListener("click", checkPixianCredits);
-[els.koukoutuProxyUrlInput, els.koukoutuApiKeyInput].forEach((input) => {
-  input.addEventListener("input", () => {
-    saveKoukoutuCredentials();
-    clearKoukoutuCreditStatus();
-    updateUi();
-  });
+els.koukoutuApiKeyInput.addEventListener("input", () => {
+  saveKoukoutuCredentials();
+  clearKoukoutuCreditStatus();
+  updateUi();
 });
 els.koukoutuCheckCreditsButton.addEventListener("click", checkKoukoutuCredits);
 loadPixianCredentials();
@@ -1142,7 +1140,7 @@ function readOptions() {
     sharpen: els.sharpenToggle.checked,
     pixianApiId: els.pixianApiIdInput.value.trim(),
     pixianApiSecret: els.pixianApiSecretInput.value.trim(),
-    koukoutuProxyUrl: normalizeKoukoutuProxyUrl(els.koukoutuProxyUrlInput.value),
+    koukoutuProxyUrl: KOUKOUTU_PROXY_URL,
     koukoutuApiKey: els.koukoutuApiKeyInput.value.trim(),
   };
 }
@@ -1182,7 +1180,6 @@ function updatePixianControls() {
 function updateKoukoutuControls() {
   const isKoukoutu = els.modelSelect.value === "koukoutu";
   els.koukoutuPanel.hidden = !isKoukoutu;
-  els.koukoutuProxyUrlInput.disabled = !isKoukoutu;
   els.koukoutuApiKeyInput.disabled = !isKoukoutu;
   els.koukoutuCheckCreditsButton.disabled = !isKoukoutu || !hasKoukoutuCredentials();
   if (!isKoukoutu) clearKoukoutuCreditStatus();
@@ -1217,7 +1214,7 @@ function getPixianCredentialsFromInputs() {
 
 function getKoukoutuCredentialsFromInputs() {
   return {
-    koukoutuProxyUrl: normalizeKoukoutuProxyUrl(els.koukoutuProxyUrlInput.value),
+    koukoutuProxyUrl: KOUKOUTU_PROXY_URL,
     koukoutuApiKey: els.koukoutuApiKeyInput.value.trim(),
   };
 }
@@ -1244,17 +1241,14 @@ function savePixianCredentials() {
 function loadKoukoutuCredentials() {
   try {
     const saved = JSON.parse(localStorage.getItem(KOUKOUTU_CREDENTIALS_KEY) || "{}");
-    els.koukoutuProxyUrlInput.value = saved.proxyUrl || "";
     els.koukoutuApiKeyInput.value = saved.apiKey || "";
   } catch (error) {
-    els.koukoutuProxyUrlInput.value = "";
     els.koukoutuApiKeyInput.value = "";
   }
 }
 
 function saveKoukoutuCredentials() {
   const credentials = {
-    proxyUrl: normalizeKoukoutuProxyUrl(els.koukoutuProxyUrlInput.value),
     apiKey: els.koukoutuApiKeyInput.value.trim(),
   };
   localStorage.setItem(KOUKOUTU_CREDENTIALS_KEY, JSON.stringify(credentials));
