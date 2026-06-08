@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>批量抠图 + 高清放大</title>
-    <link rel="stylesheet" href="./styles.css?v=20260608-11" />
+    <link rel="stylesheet" href="./styles.css?v=20260608-12" />
   </head>
   <body>
     <main class="app-shell">
@@ -128,25 +128,6 @@
             <input id="toleranceRange" type="range" min="12" max="90" step="1" value="36" />
           </div>
 
-          <div class="control-grid">
-            <label class="field">
-              <span>背景颜色</span>
-              <select id="backgroundSelect">
-                <option value="transparent" selected>透明</option>
-                <option value="#ffffff">白色</option>
-                <option value="#111111">黑色</option>
-                <option value="custom">自定义</option>
-              </select>
-            </label>
-            <label class="field color-field">
-              <span>自定义颜色</span>
-              <span class="color-row">
-                <input id="customColorInput" type="color" value="#ffffff" disabled />
-                <span id="customColorText">#ffffff</span>
-              </span>
-            </label>
-          </div>
-
           <div class="toggle-list">
             <label class="toggle">
               <input id="trimToggle" type="checkbox" />
@@ -177,6 +158,20 @@
         </aside>
 
         <section class="stage" aria-label="图片列表">
+          <section class="free-cutout-links" aria-label="免费抠图链接">
+            <h3>免费抠图链接</h3>
+            <div class="free-link-buttons">
+              <a href="https://www.koukoutu.com/removebgtool/all" target="_blank" rel="noreferrer" aria-label="打开抠抠图免费抠图">
+                <img src="https://www.koukoutu.com/favicon.ico" alt="" />
+                <span>抠抠图</span>
+              </a>
+              <a href="https://pixian.ai/" target="_blank" rel="noreferrer" aria-label="打开 Pixian.ai">
+                <img src="https://dq2gn5p12glyq.cloudfront.net/p/assets/m/favicons/pixian/favicon-32_46dab9b5e2e7d199a3e92e0d55dbd817.png" alt="" />
+                <span>Pixian.ai</span>
+              </a>
+            </div>
+          </section>
+
           <div class="stage-header">
             <div>
               <h2>任务列表</h2>
@@ -321,6 +316,6 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=20260608-11"></script>
+    <script src="./app.js?v=20260608-12"></script>
   </body>
 </html>

@@ -104,6 +104,12 @@ h2 {
   letter-spacing: 0;
 }
 
+h3 {
+  margin: 0;
+  font-size: 14px;
+  letter-spacing: 0;
+}
+
 .status-pill {
   flex: 0 0 auto;
   border: 1px solid var(--line);
@@ -456,6 +462,61 @@ button:disabled {
 .stage-header p {
   margin-bottom: 0;
   color: var(--muted);
+}
+
+.free-cutout-links {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(248, 251, 248, 0.86);
+}
+
+.free-cutout-links h3 {
+  color: #405149;
+  font-weight: 820;
+}
+
+.free-link-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.free-link-buttons a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  min-width: 112px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+  transition:
+    transform 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.free-link-buttons a:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(35, 58, 48, 0.1);
+}
+
+.free-link-buttons img {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  object-fit: contain;
 }
 
 .progress-wrap {
@@ -978,6 +1039,10 @@ figcaption {
     text-align: left;
   }
 
+  .free-cutout-links {
+    align-items: flex-start;
+  }
+
   .preview-toolbar {
     align-items: flex-start;
   }
@@ -1031,5 +1096,17 @@ figcaption {
 
   .card-buttons {
     justify-content: space-between;
+  }
+
+  .free-cutout-links {
+    display: grid;
+  }
+
+  .free-link-buttons {
+    justify-content: stretch;
+  }
+
+  .free-link-buttons a {
+    flex: 1 1 130px;
   }
 }

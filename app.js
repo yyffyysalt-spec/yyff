@@ -26,9 +26,6 @@ const els = {
   scaleSelect: document.querySelector("#scaleSelect"),
   featherSelect: document.querySelector("#featherSelect"),
   shrinkSelect: document.querySelector("#shrinkSelect"),
-  backgroundSelect: document.querySelector("#backgroundSelect"),
-  customColorInput: document.querySelector("#customColorInput"),
-  customColorText: document.querySelector("#customColorText"),
   trimToggle: document.querySelector("#trimToggle"),
   sharpenToggle: document.querySelector("#sharpenToggle"),
   checkerToggle: document.querySelector("#checkerToggle"),
@@ -117,10 +114,6 @@ els.toleranceRange.addEventListener("input", () => {
   els.toleranceOutput.value = els.toleranceRange.value;
 });
 
-els.backgroundSelect.addEventListener("change", updateBackgroundControls);
-els.customColorInput.addEventListener("input", () => {
-  els.customColorText.textContent = els.customColorInput.value;
-});
 els.modelSelect.addEventListener("change", () => {
   updateApiControls();
   updateUi();
@@ -145,7 +138,6 @@ els.koukoutuCheckCreditsButton.addEventListener("click", checkKoukoutuCredits);
 loadPixianCredentials();
 loadKoukoutuCredentials();
 updateApiControls();
-updateBackgroundControls();
 
 els.fileInput.addEventListener("change", (event) => {
   addFiles([...event.target.files]);
@@ -1135,7 +1127,7 @@ function readOptions() {
     tolerance: Number(els.toleranceRange.value) * preset.toleranceScale,
     feather: Number(els.featherSelect.value),
     shrink: Number(els.shrinkSelect.value),
-    backgroundColor: getSelectedBackgroundColor(),
+    backgroundColor: null,
     trim: els.trimToggle.checked,
     sharpen: els.sharpenToggle.checked,
     pixianApiId: els.pixianApiIdInput.value.trim(),
@@ -1521,23 +1513,6 @@ async function readKoukoutuError(response) {
   } catch (error) {
     return text;
   }
-}
-
-function updateBackgroundControls() {
-  const isCustom = els.backgroundSelect.value === "custom";
-  els.customColorInput.disabled = !isCustom;
-  els.customColorText.textContent = isCustom ? els.customColorInput.value : getSelectedBackgroundLabel();
-}
-
-function getSelectedBackgroundColor() {
-  if (els.backgroundSelect.value === "transparent") return null;
-  if (els.backgroundSelect.value === "custom") return els.customColorInput.value;
-  return els.backgroundSelect.value;
-}
-
-function getSelectedBackgroundLabel() {
-  if (els.backgroundSelect.value === "transparent") return "透明";
-  return els.backgroundSelect.value;
 }
 
 function canvasFromBitmap(bitmap) {
