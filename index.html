@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>批量抠图 + 高清放大</title>
-    <link rel="stylesheet" href="./styles.css?v=20260608-6" />
+    <link rel="stylesheet" href="./styles.css?v=20260608-7" />
   </head>
   <body>
     <main class="app-shell">
@@ -94,6 +94,11 @@
               <span>Pixian API Secret</span>
               <input id="pixianApiSecretInput" type="password" autocomplete="off" placeholder="从 Pixian 账号复制 API Secret" />
             </label>
+            <div class="api-actions">
+              <button class="small-button" id="pixianCheckCreditsButton" type="button">检查额度</button>
+              <a class="small-button" href="https://pixian.ai/pricing" target="_blank" rel="noreferrer">购买 Pixian 额度</a>
+            </div>
+            <p class="api-status" id="pixianCreditStatus" aria-live="polite"></p>
           </div>
 
           <div class="control-group">
@@ -295,6 +300,6 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=20260608-6"></script>
+    <script src="./app.js?v=20260608-7"></script>
   </body>
 </html>
