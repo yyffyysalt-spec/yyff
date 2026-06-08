@@ -20,6 +20,7 @@ const els = {
   pixianCheckCreditsButton: document.querySelector("#pixianCheckCreditsButton"),
   pixianCreditStatus: document.querySelector("#pixianCreditStatus"),
   koukoutuPanel: document.querySelector("#koukoutuPanel"),
+  koukoutuProxyUrlInput: document.querySelector("#koukoutuProxyUrlInput"),
   koukoutuApiKeyInput: document.querySelector("#koukoutuApiKeyInput"),
   koukoutuCheckCreditsButton: document.querySelector("#koukoutuCheckCreditsButton"),
   koukoutuCreditStatus: document.querySelector("#koukoutuCreditStatus"),
@@ -135,10 +136,12 @@ document.querySelectorAll('input[name="mode"]').forEach((input) => {
   });
 });
 els.pixianCheckCreditsButton.addEventListener("click", checkPixianCredits);
-els.koukoutuApiKeyInput.addEventListener("input", () => {
-  saveKoukoutuCredentials();
-  clearKoukoutuCreditStatus();
-  updateUi();
+[els.koukoutuProxyUrlInput, els.koukoutuApiKeyInput].forEach((input) => {
+  input.addEventListener("input", () => {
+    saveKoukoutuCredentials();
+    clearKoukoutuCreditStatus();
+    updateUi();
+  });
 });
 els.koukoutuCheckCreditsButton.addEventListener("click", checkKoukoutuCredits);
 loadPixianCredentials();
@@ -1139,6 +1142,7 @@ function readOptions() {
     sharpen: els.sharpenToggle.checked,
     pixianApiId: els.pixianApiIdInput.value.trim(),
     pixianApiSecret: els.pixianApiSecretInput.value.trim(),
+    koukoutuProxyUrl: normalizeKoukoutuProxyUrl(els.koukoutuProxyUrlInput.value),
     koukoutuApiKey: els.koukoutuApiKeyInput.value.trim(),
   };
 }
@@ -1178,6 +1182,7 @@ function updatePixianControls() {
 function updateKoukoutuControls() {
   const isKoukoutu = els.modelSelect.value === "koukoutu";
   els.koukoutuPanel.hidden = !isKoukoutu;
+  els.koukoutuProxyUrlInput.disabled = !isKoukoutu;
   els.koukoutuApiKeyInput.disabled = !isKoukoutu;
   els.koukoutuCheckCreditsButton.disabled = !isKoukoutu || !hasKoukoutuCredentials();
   if (!isKoukoutu) clearKoukoutuCreditStatus();
@@ -1212,6 +1217,7 @@ function getPixianCredentialsFromInputs() {
 
 function getKoukoutuCredentialsFromInputs() {
   return {
+    koukoutuProxyUrl: normalizeKoukoutuProxyUrl(els.koukoutuProxyUrlInput.value),
     koukoutuApiKey: els.koukoutuApiKeyInput.value.trim(),
   };
 }
@@ -1238,14 +1244,17 @@ function savePixianCredentials() {
 function loadKoukoutuCredentials() {
   try {
     const saved = JSON.parse(localStorage.getItem(KOUKOUTU_CREDENTIALS_KEY) || "{}");
+    els.koukoutuProxyUrlInput.value = saved.proxyUrl || "";
     els.koukoutuApiKeyInput.value = saved.apiKey || "";
   } catch (error) {
+    els.koukoutuProxyUrlInput.value = "";
     els.koukoutuApiKeyInput.value = "";
   }
 }
 
 function saveKoukoutuCredentials() {
   const credentials = {
+    proxyUrl: normalizeKoukoutuProxyUrl(els.koukoutuProxyUrlInput.value),
     apiKey: els.koukoutuApiKeyInput.value.trim(),
   };
   localStorage.setItem(KOUKOUTU_CREDENTIALS_KEY, JSON.stringify(credentials));
@@ -1307,16 +1316,11 @@ async function removeBackgroundWithKoukoutu(file, options) {
     throw new Error("Koukoutu API key is missing");
   }
 
-  const formData = new FormData();
-  formData.append("model_key", "background-removal");
-  formData.append("image_file", file, file.name);
-  formData.append("output_format", "png");
-  formData.append("crop", options.trim ? "1" : "0");
-  formData.append("border", getKoukoutuBorderLevel(options));
-  formData.append("stamp_crop", "0");
-  formData.append("response", "bytes");
+  const proxyUrl = normalizeKoukoutuProxyUrl(options.koukoutuProxyUrl);
+  const requestUrl = proxyUrl ? `${proxyUrl}/remove-background` : KOUKOUTU_API_URL;
+  const formData = createKoukoutuFormData(file, options);
 
-  const response = await fetch(KOUKOUTU_API_URL, {
+  const response = await fetch(requestUrl, {
     method: "POST",
     headers: {
       "X-API-Key": options.koukoutuApiKey,
@@ -1385,7 +1389,9 @@ async function getPixianAccountStatus(options) {
 }
 
 async function getKoukoutuAccountStatus(options) {
-  const response = await fetch(KOUKOUTU_SCORE_URL, {
+  const proxyUrl = normalizeKoukoutuProxyUrl(options.koukoutuProxyUrl);
+  const requestUrl = proxyUrl ? `${proxyUrl}/score` : KOUKOUTU_SCORE_URL;
+  const response = await fetch(requestUrl, {
     method: "GET",
     headers: {
       "X-API-Key": options.koukoutuApiKey,
@@ -1467,6 +1473,22 @@ function getKoukoutuBorderLevel(options) {
   if (options.feather >= 4 || options.shrink >= 2) return "2";
   if (options.feather >= 2 || options.shrink >= 1) return "1";
   return "0";
+}
+
+function createKoukoutuFormData(file, options) {
+  const formData = new FormData();
+  formData.append("model_key", "background-removal");
+  formData.append("image_file", file, file.name);
+  formData.append("output_format", "png");
+  formData.append("crop", options.trim ? "1" : "0");
+  formData.append("border", getKoukoutuBorderLevel(options));
+  formData.append("stamp_crop", "0");
+  formData.append("response", "bytes");
+  return formData;
+}
+
+function normalizeKoukoutuProxyUrl(value) {
+  return String(value || "").trim().replace(/\/+$/, "");
 }
 
 function getProcessingErrorText(error) {

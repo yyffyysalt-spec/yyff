@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>批量抠图 + 高清放大</title>
-    <link rel="stylesheet" href="./styles.css?v=20260608-9" />
+    <link rel="stylesheet" href="./styles.css?v=20260608-10" />
   </head>
   <body>
     <main class="app-shell">
@@ -109,6 +109,10 @@
               <span>同步抠图会消耗抠抠图积分。</span>
               <span>如果浏览器提示无法连接，需要使用中转服务。</span>
             </p>
+            <label class="field">
+              <span>中转接口地址</span>
+              <input id="koukoutuProxyUrlInput" type="url" autocomplete="off" placeholder="例如 https://你的中转接口.workers.dev" />
+            </label>
             <label class="field">
               <span>抠抠图 API Key</span>
               <input id="koukoutuApiKeyInput" type="password" autocomplete="off" placeholder="从抠抠图账号复制 API Key" />
@@ -321,6 +325,6 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=20260608-9"></script>
+    <script src="./app.js?v=20260608-10"></script>
   </body>
 </html>
