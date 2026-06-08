@@ -314,6 +314,8 @@ select {
 }
 
 .api-help {
+  display: grid;
+  gap: 4px;
   margin: 0;
   color: var(--muted);
   font-size: 12px;
