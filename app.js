@@ -307,7 +307,10 @@ async function compressImageFile(file) {
   const canvas = await fileToCanvas(file);
   const quality = getSelectedCompressionQuality();
   const mimeType = getCompressionMime(file, els.compressFormatSelect.value);
-  const compressed = await getSmallestCompressionResult(canvas, file, mimeType, quality);
+  const compressed =
+    mimeType === "image/gif"
+      ? canvasToGifResult(canvas)
+      : await getSmallestCompressionResult(canvas, file, mimeType, quality);
   const outputName = `${fileBaseName(file.name)}-compressed.${extensionForMime(compressed.mimeType, file.name)}`;
 
   return {
@@ -435,7 +438,10 @@ async function estimateCompressionSizes() {
       const mimeType = getCompressionMime(file, els.compressFormatSelect.value);
 
       for (const mode of modes) {
-        const compressed = await getSmallestCompressionResult(canvas, file, mimeType, getCompressionQualityForMode(mode));
+        const compressed =
+          mimeType === "image/gif"
+            ? canvasToGifResult(canvas)
+            : await getSmallestCompressionResult(canvas, file, mimeType, getCompressionQualityForMode(mode));
         totals[mode] += compressed.blob.size;
       }
 
@@ -489,6 +495,163 @@ function getSmallestBlobResult(results) {
 
 function getOriginalMime(file) {
   return file.type?.startsWith("image/") ? file.type : "image/png";
+}
+
+function canvasToGifResult(canvas) {
+  return {
+    blob: canvasToGifBlob(canvas),
+    mimeType: "image/gif",
+  };
+}
+
+function canvasToGifBlob(canvas) {
+  const { width, height } = canvas;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const rgba = ctx.getImageData(0, 0, width, height).data;
+  const indexedPixels = new Uint8Array(width * height);
+  const palette = buildGifPalette();
+  let hasTransparency = false;
+
+  for (let source = 0, target = 0; source < rgba.length; source += 4, target += 1) {
+    const alpha = rgba[source + 3];
+    if (alpha < 128) {
+      indexedPixels[target] = 0;
+      hasTransparency = true;
+      continue;
+    }
+
+    indexedPixels[target] = quantizeGifColor(rgba[source], rgba[source + 1], rgba[source + 2]);
+  }
+
+  const lzwData = encodeGifLzw(indexedPixels, 8);
+  const parts = [
+    asciiBytes("GIF89a"),
+    wordBytes(width),
+    wordBytes(height),
+    new Uint8Array([0xf7, 0x00, 0x00]),
+    palette,
+  ];
+
+  if (hasTransparency) {
+    parts.push(new Uint8Array([0x21, 0xf9, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00]));
+  }
+
+  parts.push(
+    new Uint8Array([0x2c]),
+    wordBytes(0),
+    wordBytes(0),
+    wordBytes(width),
+    wordBytes(height),
+    new Uint8Array([0x00, 0x08]),
+    gifSubBlocks(lzwData),
+    new Uint8Array([0x3b]),
+  );
+
+  return new Blob(parts, { type: "image/gif" });
+}
+
+function buildGifPalette() {
+  const palette = new Uint8Array(256 * 3);
+  let offset = 3;
+
+  for (let r = 0; r < 6; r += 1) {
+    for (let g = 0; g < 7; g += 1) {
+      for (let b = 0; b < 6; b += 1) {
+        palette[offset] = Math.round((r / 5) * 255);
+        palette[offset + 1] = Math.round((g / 6) * 255);
+        palette[offset + 2] = Math.round((b / 5) * 255);
+        offset += 3;
+      }
+    }
+  }
+
+  return palette;
+}
+
+function quantizeGifColor(red, green, blue) {
+  const r = Math.round((red / 255) * 5);
+  const g = Math.round((green / 255) * 6);
+  const b = Math.round((blue / 255) * 5);
+  return 1 + r * 42 + g * 6 + b;
+}
+
+function encodeGifLzw(indices, minCodeSize) {
+  const clearCode = 1 << minCodeSize;
+  const endCode = clearCode + 1;
+  let nextCode = endCode + 1;
+  let codeSize = minCodeSize + 1;
+  let prefix = "";
+  const dictionary = new Map();
+  const bytes = [];
+  let bitBuffer = 0;
+  let bitCount = 0;
+
+  const resetDictionary = () => {
+    dictionary.clear();
+    for (let i = 0; i < clearCode; i += 1) dictionary.set(String(i), i);
+    nextCode = endCode + 1;
+    codeSize = minCodeSize + 1;
+  };
+  const writeCode = (code) => {
+    bitBuffer |= code << bitCount;
+    bitCount += codeSize;
+    while (bitCount >= 8) {
+      bytes.push(bitBuffer & 0xff);
+      bitBuffer >>= 8;
+      bitCount -= 8;
+    }
+  };
+
+  resetDictionary();
+  writeCode(clearCode);
+
+  for (const value of indices) {
+    const current = String(value);
+    const combined = prefix ? `${prefix},${current}` : current;
+
+    if (dictionary.has(combined)) {
+      prefix = combined;
+      continue;
+    }
+
+    writeCode(dictionary.get(prefix));
+
+    if (nextCode < 4096) {
+      dictionary.set(combined, nextCode);
+      nextCode += 1;
+      if (nextCode === 1 << codeSize && codeSize < 12) codeSize += 1;
+    } else {
+      writeCode(clearCode);
+      resetDictionary();
+    }
+
+    prefix = current;
+  }
+
+  if (prefix) writeCode(dictionary.get(prefix));
+  writeCode(endCode);
+  if (bitCount > 0) bytes.push(bitBuffer & 0xff);
+  return new Uint8Array(bytes);
+}
+
+function gifSubBlocks(bytes) {
+  const blocks = [];
+
+  for (let offset = 0; offset < bytes.length; offset += 255) {
+    const chunk = bytes.slice(offset, offset + 255);
+    blocks.push(chunk.length, ...chunk);
+  }
+
+  blocks.push(0);
+  return new Uint8Array(blocks);
+}
+
+function asciiBytes(text) {
+  return new Uint8Array([...text].map((char) => char.charCodeAt(0)));
+}
+
+function wordBytes(value) {
+  return new Uint8Array([value & 0xff, (value >> 8) & 0xff]);
 }
 
 function canvasHasTransparency(canvas) {
