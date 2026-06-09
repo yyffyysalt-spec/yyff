@@ -113,7 +113,7 @@ const COMPRESSION_QUALITY_PRESETS = {
   high: 0.6,
   low: 0.9,
 };
-const COMPRESSION_FALLBACK_MIMES = ["image/webp", "image/jpeg", "image/png"];
+const COMPRESSION_FALLBACK_MIMES = ["image/jpeg", "image/png"];
 let previewUrl = null;
 let previewItem = null;
 let editItem = null;
@@ -464,7 +464,7 @@ async function getSmallestCompressionResult(canvas, file, preferredMimeType, qua
   for (const mimeType of candidates) {
     try {
       const blob = await canvasToBlob(canvas, mimeType, quality);
-      encoded.push({ blob, mimeType });
+      encoded.push({ blob, mimeType: blob.type || mimeType });
     } catch (error) {
       // Some browsers may not support every export format.
     }
