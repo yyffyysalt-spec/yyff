@@ -114,6 +114,7 @@ const KOUKOUTU_SCORE_URL = "https://async.koukoutu.com/v1/score";
 const KOUKOUTU_PROXY_URL = "https://young-art-be70.ste611003.workers.dev";
 const KOUKOUTU_CREDENTIALS_KEY = "imageBatchStudio.koukoutuCredentials.v1";
 const GIF_DECODER_MODULE_URL = "https://esm.sh/gifuct-js@2.1.2?bundle";
+const GIF_ENCODER_MODULE_URL = "https://unpkg.com/gifenc";
 const COMPRESSION_QUALITY_PRESETS = {
   high: 0.6,
   low: 0.9,
@@ -147,6 +148,7 @@ let compressionEstimateTimer = null;
 let compressionPreviewUrl = null;
 let compressionPreviewBlob = null;
 let gifDecoderModulePromise = null;
+let gifEncoderModulePromise = null;
 
 els.toleranceRange.addEventListener("input", () => {
   els.toleranceOutput.value = els.toleranceRange.value;
@@ -550,16 +552,40 @@ async function compressAnimatedGifFile(file, quality) {
     };
   }
 
-  return {
-    blob: file,
-    mimeType: "image/gif",
-    width: timing.width || 0,
-    height: timing.height || 0,
-  };
+  let best = null;
+  const attempts = getGifCompressionAttempts(quality, timing);
+
+  for (const options of attempts) {
+    try {
+      const rendered = await renderGifFrames(file, null, quality, options);
+      const blob = await encodeGifFrames(rendered, options.colors);
+      const result = {
+        blob,
+        mimeType: "image/gif",
+        width: rendered.width,
+        height: rendered.height,
+      };
+
+      if (!best || blob.size < best.blob.size) best = result;
+      if (blob.size < file.size) return result;
+    } catch (error) {
+      console.warn(error);
+    }
+  }
+
+  return (
+    best || {
+      blob: file,
+      mimeType: "image/gif",
+      width: timing.width || 0,
+      height: timing.height || 0,
+    }
+  );
 }
 
 function estimateAnimatedGifSize(file, quality) {
-  return file.size;
+  const ratio = clampNumber(0.32 + quality * 0.4, 0.48, 0.86);
+  return Math.max(1024, Math.round(file.size * ratio));
 }
 
 async function readGifTiming(file) {
@@ -636,20 +662,23 @@ function asciiFromBytes(bytes, offset, length) {
   return String.fromCharCode(...bytes.slice(offset, offset + length));
 }
 
-function getAnimatedGifCapturePlan(timing, quality) {
-  const maxFrames = Math.round(18 + quality * 60);
-  const durationMs = Math.min(Math.max(timing.totalDurationMs || 1000, 300), 10000);
-  const frameCount = Math.max(1, Math.min(timing.frameCount || maxFrames, maxFrames));
-  const intervalMs = Math.max(40, Math.round(durationMs / frameCount));
+function getGifCompressionAttempts(quality, timing = {}) {
+  const baseScale = quality >= 0.85 ? 1 : quality >= 0.7 ? 0.92 : 0.84;
+  const baseColors = quality >= 0.85 ? 128 : quality >= 0.7 ? 96 : 64;
+  const frameCount = timing.frameCount || 1;
 
-  return {
-    frameCount,
-    intervalMs,
-    delayCs: Math.max(2, Math.round(intervalMs / 10)),
-  };
+  return [
+    { colors: baseColors, maxFrames: quality >= 0.85 ? 100 : 76, scale: baseScale },
+    { colors: Math.min(baseColors, 80), maxFrames: 64, scale: Math.min(baseScale, 0.86) },
+    { colors: 48, maxFrames: 48, scale: 0.78 },
+    { colors: 32, maxFrames: 36, scale: 0.68 },
+  ].map((attempt) => ({
+    ...attempt,
+    step: Math.max(1, Math.ceil(frameCount / attempt.maxFrames)),
+  }));
 }
 
-async function renderGifFrames(file, cropRect = null, quality = getSelectedCompressionQuality()) {
+async function renderGifFrames(file, cropRect = null, quality = getSelectedCompressionQuality(), options = {}) {
   const { parseGIF, decompressFrames } = await loadGifDecoderModule();
   const bytes = await file.arrayBuffer();
   const gif = parseGIF(bytes);
@@ -668,12 +697,13 @@ async function renderGifFrames(file, cropRect = null, quality = getSelectedCompr
   sourceCanvas.height = sourceHeight;
   const sourceCtx = sourceCanvas.getContext("2d", { willReadFrequently: true });
   const outputCanvas = document.createElement("canvas");
-  outputCanvas.width = crop.width;
-  outputCanvas.height = crop.height;
+  const scale = options.scale || 1;
+  outputCanvas.width = Math.max(1, Math.round(crop.width * scale));
+  outputCanvas.height = Math.max(1, Math.round(crop.height * scale));
   const outputCtx = outputCanvas.getContext("2d", { willReadFrequently: true });
   const patchCanvas = document.createElement("canvas");
   const patchCtx = patchCanvas.getContext("2d", { willReadFrequently: true });
-  const plan = getDecodedGifFramePlan(decodedFrames.length, quality);
+  const step = options.step || getDecodedGifFramePlan(decodedFrames.length, quality).step;
   const frames = [];
   const delays = [];
   let restoreSnapshot = null;
@@ -689,10 +719,10 @@ async function renderGifFrames(file, cropRect = null, quality = getSelectedCompr
     patchCtx.putImageData(patch, 0, 0);
     sourceCtx.drawImage(patchCanvas, frame.dims.left, frame.dims.top);
 
-    if (index % plan.step === 0 || index === decodedFrames.length - 1) {
+    if (index % step === 0 || index === decodedFrames.length - 1) {
       outputCtx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
       outputCtx.drawImage(sourceCanvas, crop.x, crop.y, crop.width, crop.height, 0, 0, outputCanvas.width, outputCanvas.height);
-      frames.push(canvasToGifFrame(outputCanvas));
+      frames.push(canvasToRgbaFrame(outputCanvas));
       delays.push(Math.max(2, Math.round((frame.delay || 100) / 10)));
     } else if (delays.length) {
       delays[delays.length - 1] += Math.max(2, Math.round((frame.delay || 100) / 10));
@@ -714,9 +744,57 @@ async function renderGifFrames(file, cropRect = null, quality = getSelectedCompr
   };
 }
 
+function canvasToRgbaFrame(canvas) {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  return new Uint8Array(data);
+}
+
+async function encodeGifFrames(rendered, colorCount) {
+  const { GIFEncoder, quantize, applyPalette } = await loadGifEncoderModule();
+  const encoder = GIFEncoder();
+
+  rendered.frames.forEach((rgba, index) => {
+    const palette = quantize(rgba, colorCount, {
+      format: "rgba4444",
+      clearAlpha: true,
+      clearAlphaThreshold: 96,
+      oneBitAlpha: 127,
+    });
+    const indexed = applyPalette(rgba, palette, "rgba4444");
+    const transparentIndex = palette.findIndex((color) => color[3] === 0);
+
+    encoder.writeFrame(indexed, rendered.width, rendered.height, {
+      palette,
+      delay: Math.max(20, (rendered.delays[index] || 10) * 10),
+      repeat: 0,
+      dispose: 2,
+      transparent: transparentIndex >= 0,
+      transparentIndex: transparentIndex >= 0 ? transparentIndex : 0,
+    });
+  });
+
+  encoder.finish();
+  return new Blob([encoder.bytes()], { type: "image/gif" });
+}
+
 async function loadGifDecoderModule() {
   if (!gifDecoderModulePromise) gifDecoderModulePromise = import(GIF_DECODER_MODULE_URL);
   return gifDecoderModulePromise;
+}
+
+async function loadGifEncoderModule() {
+  if (!gifEncoderModulePromise) {
+    gifEncoderModulePromise = import(GIF_ENCODER_MODULE_URL).then((module) => {
+      const lib = module.default || module;
+      return {
+        GIFEncoder: lib.GIFEncoder || module.GIFEncoder,
+        quantize: lib.quantize || module.quantize,
+        applyPalette: lib.applyPalette || module.applyPalette,
+      };
+    });
+  }
+  return gifEncoderModulePromise;
 }
 
 function getDecodedGifFramePlan(frameCount, quality) {
@@ -1387,7 +1465,7 @@ async function cropGifBlob(blob, cropRect) {
 
   const rendered = await renderGifFrames(blob, cropRect, getSelectedCompressionQuality());
   return {
-    blob: animatedGifBlob(rendered.width, rendered.height, rendered.frames, rendered.delays),
+    blob: await encodeGifFrames(rendered, 96),
     mimeType: "image/gif",
     width: rendered.width,
     height: rendered.height,
