@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>批量抠图 + 高清放大</title>
-    <link rel="stylesheet" href="./styles.css?v=20260608-13" />
+    <link rel="stylesheet" href="./styles.css?v=20260609-1" />
   </head>
   <body>
     <main class="app-shell">
@@ -177,36 +177,71 @@
               <h3>图片 / GIF 压缩</h3>
               <span id="compressStatus">待选择</span>
             </div>
-            <div class="compress-controls">
+            <div class="compress-body">
               <label class="compress-upload">
                 <input id="compressFileInput" type="file" accept="image/*,.gif" multiple />
+                <span class="compress-upload-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M12 3v12m0-12 4 4m-4-4-4 4M5 15v3a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-3"/></svg>
+                </span>
                 <span>选择图片</span>
               </label>
-              <label class="field compact-field">
-                <span>质量</span>
-                <input id="compressQualityRange" type="range" min="35" max="95" step="5" value="75" />
-                <output id="compressQualityOutput">75</output>
-              </label>
-              <label class="field compact-field">
-                <span>最大边长</span>
-                <select id="compressMaxEdgeSelect">
-                  <option value="0">原尺寸</option>
-                  <option value="1600" selected>1600px</option>
-                  <option value="1200">1200px</option>
-                  <option value="800">800px</option>
-                </select>
-              </label>
-              <label class="field compact-field">
-                <span>格式</span>
-                <select id="compressFormatSelect">
-                  <option value="auto" selected>智能</option>
-                  <option value="image/webp">WebP</option>
-                  <option value="image/jpeg">JPG</option>
-                  <option value="image/png">PNG</option>
-                </select>
-              </label>
-              <button class="small-button" id="compressButton" type="button" disabled>开始压缩</button>
-              <button class="small-button" id="compressDownloadButton" type="button" disabled>下载</button>
+              <div class="compress-settings">
+                <div class="compress-quality-grid" role="radiogroup" aria-label="压缩质量">
+                  <label class="quality-card">
+                    <input type="radio" name="compressQualityMode" value="high" />
+                    <span class="quality-title">高</span>
+                    <span class="quality-copy">体积更小，标准质量</span>
+                    <span class="quality-badge">质量 60</span>
+                  </label>
+                  <label class="quality-card">
+                    <input type="radio" name="compressQualityMode" value="basic" checked />
+                    <span class="quality-title">基本</span>
+                    <span class="quality-copy">平衡体积，清晰质量</span>
+                    <span class="quality-badge">质量 75</span>
+                  </label>
+                  <label class="quality-card">
+                    <input type="radio" name="compressQualityMode" value="low" />
+                    <span class="quality-title">低</span>
+                    <span class="quality-copy">体积较大，更高质量</span>
+                    <span class="quality-badge">质量 90</span>
+                  </label>
+                  <label class="quality-card">
+                    <input type="radio" name="compressQualityMode" value="custom" />
+                    <span class="quality-title">自定义</span>
+                    <span class="quality-copy">手动调节压缩质量</span>
+                    <span class="quality-badge">手动选择</span>
+                  </label>
+                </div>
+                <div class="compress-custom-quality" id="compressCustomQuality" hidden>
+                  <label class="slider-row" for="compressQualityRange">
+                    <span>自定义质量</span>
+                    <output id="compressQualityOutput">75</output>
+                  </label>
+                  <input id="compressQualityRange" type="range" min="35" max="95" step="5" value="75" />
+                </div>
+                <div class="compress-controls">
+                  <label class="field compact-field">
+                    <span>最大边长</span>
+                    <select id="compressMaxEdgeSelect">
+                      <option value="0">原尺寸</option>
+                      <option value="1600" selected>1600px</option>
+                      <option value="1200">1200px</option>
+                      <option value="800">800px</option>
+                    </select>
+                  </label>
+                  <label class="field compact-field">
+                    <span>格式</span>
+                    <select id="compressFormatSelect">
+                      <option value="auto" selected>智能</option>
+                      <option value="image/webp">WebP</option>
+                      <option value="image/jpeg">JPG</option>
+                      <option value="image/png">PNG</option>
+                    </select>
+                  </label>
+                  <button class="small-button" id="compressButton" type="button" disabled>开始压缩</button>
+                  <button class="small-button" id="compressDownloadButton" type="button" disabled>下载</button>
+                </div>
+              </div>
             </div>
             <div class="compress-list" id="compressList"></div>
           </section>
@@ -355,6 +390,6 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=20260608-13"></script>
+    <script src="./app.js?v=20260609-1"></script>
   </body>
 </html>

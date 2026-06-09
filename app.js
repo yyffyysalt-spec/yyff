@@ -42,6 +42,7 @@ const els = {
   compressFileInput: document.querySelector("#compressFileInput"),
   compressQualityRange: document.querySelector("#compressQualityRange"),
   compressQualityOutput: document.querySelector("#compressQualityOutput"),
+  compressCustomQuality: document.querySelector("#compressCustomQuality"),
   compressMaxEdgeSelect: document.querySelector("#compressMaxEdgeSelect"),
   compressFormatSelect: document.querySelector("#compressFormatSelect"),
   compressButton: document.querySelector("#compressButton"),
@@ -104,6 +105,11 @@ const KOUKOUTU_API_URL = "https://sync.koukoutu.com/v1/create";
 const KOUKOUTU_SCORE_URL = "https://async.koukoutu.com/v1/score";
 const KOUKOUTU_PROXY_URL = "https://young-art-be70.ste611003.workers.dev";
 const KOUKOUTU_CREDENTIALS_KEY = "imageBatchStudio.koukoutuCredentials.v1";
+const COMPRESSION_QUALITY_PRESETS = {
+  high: 0.6,
+  basic: 0.75,
+  low: 0.9,
+};
 let previewUrl = null;
 let previewItem = null;
 let editItem = null;
@@ -131,6 +137,9 @@ els.toleranceRange.addEventListener("input", () => {
 
 els.compressQualityRange.addEventListener("input", () => {
   els.compressQualityOutput.value = els.compressQualityRange.value;
+});
+document.querySelectorAll('input[name="compressQualityMode"]').forEach((input) => {
+  input.addEventListener("change", updateCompressionQualityControls);
 });
 els.compressFileInput.addEventListener("change", (event) => {
   setCompressionFiles([...event.target.files]);
@@ -162,6 +171,7 @@ els.koukoutuCheckCreditsButton.addEventListener("click", checkKoukoutuCredits);
 loadPixianCredentials();
 loadKoukoutuCredentials();
 updateApiControls();
+updateCompressionQualityControls();
 
 els.fileInput.addEventListener("change", (event) => {
   addFiles([...event.target.files]);
@@ -279,7 +289,7 @@ async function compressSelectedFiles() {
 async function compressImageFile(file) {
   const canvas = await fileToCanvas(file);
   const maxEdge = Number(els.compressMaxEdgeSelect.value);
-  const quality = Number(els.compressQualityRange.value) / 100;
+  const quality = getSelectedCompressionQuality();
   const scaledCanvas = resizeCanvasToMaxEdge(canvas, maxEdge);
   const mimeType = getCompressionMime(file, els.compressFormatSelect.value);
   const blob = await canvasToBlob(scaledCanvas, mimeType, quality);
@@ -358,6 +368,23 @@ function extensionForMime(mimeType) {
 
 function fileBaseName(name) {
   return name.replace(/\.[^.]+$/, "") || "image";
+}
+
+function getSelectedCompressionQualityMode() {
+  return document.querySelector('input[name="compressQualityMode"]:checked')?.value || "basic";
+}
+
+function getSelectedCompressionQuality() {
+  const mode = getSelectedCompressionQualityMode();
+  if (mode === "custom") return Number(els.compressQualityRange.value) / 100;
+  return COMPRESSION_QUALITY_PRESETS[mode] ?? COMPRESSION_QUALITY_PRESETS.basic;
+}
+
+function updateCompressionQualityControls() {
+  const isCustom = getSelectedCompressionQualityMode() === "custom";
+  els.compressCustomQuality.hidden = !isCustom;
+  els.compressQualityRange.disabled = !isCustom;
+  els.compressQualityOutput.value = els.compressQualityRange.value;
 }
 
 function updateCompressionUi(statusText = "") {
