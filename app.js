@@ -550,32 +550,16 @@ async function compressAnimatedGifFile(file, quality) {
     };
   }
 
-  let rendered;
-  let blob;
-  try {
-    rendered = await renderGifFrames(file, null, quality);
-    blob = animatedGifBlob(rendered.width, rendered.height, rendered.frames, rendered.delays);
-  } catch (error) {
-    console.warn(error);
-    return {
-      blob: file,
-      mimeType: "image/gif",
-      width: timing.width || 0,
-      height: timing.height || 0,
-    };
-  }
-
   return {
-    blob: blob.size < file.size ? blob : file,
+    blob: file,
     mimeType: "image/gif",
-    width: rendered.width,
-    height: rendered.height,
+    width: timing.width || 0,
+    height: timing.height || 0,
   };
 }
 
 function estimateAnimatedGifSize(file, quality) {
-  const ratio = clampNumber(0.45 + quality * 0.45, 0.62, 0.92);
-  return Math.max(1024, Math.min(file.size, Math.round(file.size * ratio)));
+  return file.size;
 }
 
 async function readGifTiming(file) {
