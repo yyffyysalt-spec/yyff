@@ -59,6 +59,10 @@ const els = {
   previewTitle: document.querySelector("#previewTitle"),
   previewMeta: document.querySelector("#previewMeta"),
   previewDownloadButton: document.querySelector("#previewDownloadButton"),
+  previewCropButton: document.querySelector("#previewCropButton"),
+  previewApplyCropButton: document.querySelector("#previewApplyCropButton"),
+  previewCancelCropButton: document.querySelector("#previewCancelCropButton"),
+  previewCropOverlay: document.querySelector("#previewCropOverlay"),
   previewCloseButton: document.querySelector("#previewCloseButton"),
   editModal: document.querySelector("#editModal"),
   editBackgroundCanvas: document.querySelector("#editBackgroundCanvas"),
@@ -116,6 +120,10 @@ const COMPRESSION_QUALITY_PRESETS = {
 const COMPRESSION_FALLBACK_MIMES = ["image/jpeg", "image/png"];
 let previewUrl = null;
 let previewItem = null;
+let isPreviewCropping = false;
+let previewCropRect = null;
+let previewCropBounds = null;
+let previewCropDrag = null;
 let editItem = null;
 let editUndoStack = [];
 let editPickCount = 0;
@@ -216,6 +224,12 @@ els.previewCloseButton.addEventListener("click", () => els.previewModal.close())
 els.previewDownloadButton.addEventListener("click", () => {
   if (previewItem?.blob) downloadBlob(previewItem.blob, previewItem.outputName);
 });
+els.previewCropButton.addEventListener("click", startPreviewCrop);
+els.previewCancelCropButton.addEventListener("click", stopPreviewCrop);
+els.previewApplyCropButton.addEventListener("click", applyPreviewCrop);
+els.previewCropOverlay.addEventListener("pointerdown", startPreviewCropDrag);
+document.addEventListener("pointermove", movePreviewCropDrag);
+document.addEventListener("pointerup", endPreviewCropDrag);
 els.previewModal.addEventListener("click", (event) => {
   if (event.target === els.previewModal) els.previewModal.close();
 });
@@ -1069,6 +1083,7 @@ function openPreview(item) {
   els.previewMeta.textContent = isCompressionPreview
     ? `压缩后大小：${formatBytes(item.blob.size)}`
     : `${width} x ${height} · ${formatBytes(item.blob.size)}`;
+  setPreviewCropControls(isCompressionPreview);
   if (typeof els.previewModal.showModal === "function") {
     els.previewModal.showModal();
   } else {
@@ -1077,12 +1092,268 @@ function openPreview(item) {
 }
 
 function clearPreviewModal() {
+  stopPreviewCrop();
   if (previewUrl) {
     URL.revokeObjectURL(previewUrl);
     previewUrl = null;
   }
   previewItem = null;
+  setPreviewCropControls(false);
   els.previewImage.removeAttribute("src");
+}
+
+function setPreviewCropControls(canCrop) {
+  els.previewCropButton.hidden = !canCrop;
+  els.previewApplyCropButton.hidden = true;
+  els.previewCancelCropButton.hidden = true;
+  els.previewCropOverlay.hidden = true;
+  isPreviewCropping = false;
+  previewCropRect = null;
+  previewCropBounds = null;
+  previewCropDrag = null;
+}
+
+async function startPreviewCrop() {
+  if (!previewItem || previewItem.resultCanvas) return;
+  await waitForPreviewImage();
+  updatePreviewCropBounds();
+  if (!previewCropBounds?.width || !previewCropBounds?.height) return;
+
+  const marginX = Math.round(previewCropBounds.width * 0.08);
+  const marginY = Math.round(previewCropBounds.height * 0.08);
+  previewCropRect = {
+    x: marginX,
+    y: marginY,
+    width: Math.max(40, previewCropBounds.width - marginX * 2),
+    height: Math.max(40, previewCropBounds.height - marginY * 2),
+  };
+  isPreviewCropping = true;
+  els.previewCropButton.hidden = true;
+  els.previewApplyCropButton.hidden = false;
+  els.previewCancelCropButton.hidden = false;
+  els.previewCropOverlay.hidden = false;
+  renderPreviewCropOverlay();
+}
+
+function stopPreviewCrop() {
+  isPreviewCropping = false;
+  previewCropRect = null;
+  previewCropBounds = null;
+  previewCropDrag = null;
+  els.previewCropOverlay.hidden = true;
+  if (previewItem && !previewItem.resultCanvas) els.previewCropButton.hidden = false;
+  els.previewApplyCropButton.hidden = true;
+  els.previewCancelCropButton.hidden = true;
+}
+
+function waitForPreviewImage() {
+  if (els.previewImage.complete && els.previewImage.naturalWidth) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    els.previewImage.onload = () => resolve();
+    els.previewImage.onerror = () => reject(new Error("预览图片读取失败"));
+  });
+}
+
+function updatePreviewCropBounds() {
+  const image = els.previewImage;
+  previewCropBounds = {
+    x: image.offsetLeft,
+    y: image.offsetTop,
+    width: image.clientWidth,
+    height: image.clientHeight,
+  };
+}
+
+function renderPreviewCropOverlay() {
+  if (!previewCropRect || !previewCropBounds) return;
+  els.previewCropOverlay.style.left = `${previewCropBounds.x + previewCropRect.x}px`;
+  els.previewCropOverlay.style.top = `${previewCropBounds.y + previewCropRect.y}px`;
+  els.previewCropOverlay.style.width = `${previewCropRect.width}px`;
+  els.previewCropOverlay.style.height = `${previewCropRect.height}px`;
+}
+
+function startPreviewCropDrag(event) {
+  if (!isPreviewCropping || !previewCropRect) return;
+  event.preventDefault();
+  event.stopPropagation();
+  updatePreviewCropBounds();
+  previewCropDrag = {
+    handle: event.target.dataset.cropHandle || "move",
+    startX: event.clientX,
+    startY: event.clientY,
+    rect: { ...previewCropRect },
+  };
+  els.previewCropOverlay.setPointerCapture?.(event.pointerId);
+}
+
+function movePreviewCropDrag(event) {
+  if (!previewCropDrag || !previewCropBounds) return;
+  event.preventDefault();
+  const dx = event.clientX - previewCropDrag.startX;
+  const dy = event.clientY - previewCropDrag.startY;
+  previewCropRect = resizePreviewCropRect(previewCropDrag.rect, previewCropDrag.handle, dx, dy, previewCropBounds);
+  renderPreviewCropOverlay();
+}
+
+function endPreviewCropDrag() {
+  previewCropDrag = null;
+}
+
+function resizePreviewCropRect(startRect, handle, dx, dy, bounds) {
+  const minSize = 32;
+  const rect = { ...startRect };
+
+  if (handle === "move") {
+    rect.x += dx;
+    rect.y += dy;
+  } else {
+    if (handle.includes("e")) rect.width += dx;
+    if (handle.includes("s")) rect.height += dy;
+    if (handle.includes("w")) {
+      rect.x += dx;
+      rect.width -= dx;
+    }
+    if (handle.includes("n")) {
+      rect.y += dy;
+      rect.height -= dy;
+    }
+  }
+
+  if (rect.width < minSize) {
+    if (handle.includes("w")) rect.x = startRect.x + startRect.width - minSize;
+    rect.width = minSize;
+  }
+  if (rect.height < minSize) {
+    if (handle.includes("n")) rect.y = startRect.y + startRect.height - minSize;
+    rect.height = minSize;
+  }
+
+  rect.x = clampNumber(rect.x, 0, bounds.width - rect.width);
+  rect.y = clampNumber(rect.y, 0, bounds.height - rect.height);
+  rect.width = Math.min(rect.width, bounds.width - rect.x);
+  rect.height = Math.min(rect.height, bounds.height - rect.y);
+  return rect;
+}
+
+async function applyPreviewCrop() {
+  if (!previewItem || !previewCropRect || !previewCropBounds) return;
+  const cropRect = getPreviewCropPixelRect();
+  if (!cropRect.width || !cropRect.height) return;
+
+  const originalText = els.previewApplyCropButton.textContent;
+  els.previewApplyCropButton.disabled = true;
+  els.previewApplyCropButton.textContent = "裁剪中...";
+
+  try {
+    const cropped = isGifPreviewItem(previewItem)
+      ? await cropGifBlob(previewItem.blob, cropRect)
+      : await cropImageBlob(previewItem.blob, cropRect);
+
+    previewItem.blob = cropped.blob;
+    previewItem.width = cropped.width;
+    previewItem.height = cropped.height;
+    if (cropped.mimeType) previewItem.outputName = replaceOutputExtension(previewItem.outputName, cropped.mimeType);
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    previewUrl = URL.createObjectURL(previewItem.blob);
+    els.previewImage.src = previewUrl;
+    els.previewTitle.textContent = previewItem.outputName;
+    els.previewMeta.textContent = `压缩后大小：${formatBytes(previewItem.blob.size)}`;
+    updateCompressionUi();
+    stopPreviewCrop();
+  } catch (error) {
+    console.error(error);
+    els.previewMeta.textContent = "裁剪失败，请重新打开图片再试。";
+  } finally {
+    els.previewApplyCropButton.disabled = false;
+    els.previewApplyCropButton.textContent = originalText;
+  }
+}
+
+function getPreviewCropPixelRect() {
+  const scaleX = (els.previewImage.naturalWidth || previewItem.width) / previewCropBounds.width;
+  const scaleY = (els.previewImage.naturalHeight || previewItem.height) / previewCropBounds.height;
+
+  return {
+    x: Math.max(0, Math.round(previewCropRect.x * scaleX)),
+    y: Math.max(0, Math.round(previewCropRect.y * scaleY)),
+    width: Math.max(1, Math.round(previewCropRect.width * scaleX)),
+    height: Math.max(1, Math.round(previewCropRect.height * scaleY)),
+  };
+}
+
+function isGifPreviewItem(item) {
+  return item?.blob?.type === "image/gif" || /\.gif$/i.test(item?.outputName || "");
+}
+
+async function cropImageBlob(blob, cropRect) {
+  const source = await fileToCanvas(blob);
+  const rect = clampCropRect(cropRect, source.width, source.height);
+  const output = document.createElement("canvas");
+  output.width = rect.width;
+  output.height = rect.height;
+  output.getContext("2d").drawImage(source, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
+  const mimeType = blob.type === "image/jpeg" ? "image/jpeg" : "image/png";
+  const croppedBlob = await canvasToBlob(output, mimeType, getSelectedCompressionQuality());
+
+  return {
+    blob: croppedBlob,
+    mimeType: croppedBlob.type || mimeType,
+    width: output.width,
+    height: output.height,
+  };
+}
+
+async function cropGifBlob(blob, cropRect) {
+  const timing = await readGifTiming(blob);
+  const image = await loadImageElement(blob);
+  const sourceWidth = image.naturalWidth || image.width;
+  const sourceHeight = image.naturalHeight || image.height;
+  const rect = clampCropRect(cropRect, sourceWidth, sourceHeight);
+  const canvas = document.createElement("canvas");
+  canvas.width = rect.width;
+  canvas.height = rect.height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+  if (timing.frameCount <= 1) {
+    ctx.drawImage(image, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
+    image.release();
+    const result = canvasToGifResult(canvas);
+    return { blob: result.blob, mimeType: result.mimeType, width: canvas.width, height: canvas.height };
+  }
+
+  const plan = getAnimatedGifCapturePlan(timing, getSelectedCompressionQuality());
+  const frames = [];
+
+  for (let index = 0; index < plan.frameCount; index += 1) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image, rect.x, rect.y, rect.width, rect.height, 0, 0, canvas.width, canvas.height);
+    frames.push(canvasToGifFrame(canvas));
+    await wait(plan.intervalMs);
+    await nextFrame();
+  }
+
+  image.release();
+  return {
+    blob: animatedGifBlob(canvas.width, canvas.height, frames, plan.delayCs),
+    mimeType: "image/gif",
+    width: canvas.width,
+    height: canvas.height,
+  };
+}
+
+function replaceOutputExtension(name, mimeType) {
+  return `${fileBaseName(name)}.${extensionForMime(mimeType)}`;
+}
+
+function clampCropRect(rect, width, height) {
+  const x = clampNumber(rect.x, 0, Math.max(0, width - 1));
+  const y = clampNumber(rect.y, 0, Math.max(0, height - 1));
+  return {
+    x,
+    y,
+    width: Math.max(1, Math.min(rect.width, width - x)),
+    height: Math.max(1, Math.min(rect.height, height - y)),
+  };
 }
 
 function openEditor(item) {

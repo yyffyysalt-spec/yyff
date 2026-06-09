@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>批量抠图 + 高清放大</title>
-    <link rel="stylesheet" href="./styles.css?v=20260609-9" />
+    <link rel="stylesheet" href="./styles.css?v=20260609-10" />
   </head>
   <body>
     <main class="app-shell">
@@ -301,6 +301,9 @@
             <p id="previewMeta"></p>
           </div>
           <div class="preview-actions">
+            <button class="small-button" id="previewCropButton" type="button" hidden>裁剪大小</button>
+            <button class="small-button" id="previewApplyCropButton" type="button" hidden>应用裁剪</button>
+            <button class="small-button" id="previewCancelCropButton" type="button" hidden>取消裁剪</button>
             <button class="small-button" id="previewDownloadButton" type="button">下载</button>
             <button class="icon-button" id="previewCloseButton" type="button" title="关闭">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -309,6 +312,17 @@
         </div>
         <div class="preview-image-wrap checker">
           <img id="previewImage" alt="放大的处理结果预览" />
+          <div class="crop-overlay" id="previewCropOverlay" hidden>
+            <span class="crop-grid" aria-hidden="true"></span>
+            <button class="crop-handle crop-handle-nw" type="button" data-crop-handle="nw" aria-label="裁剪左上角"></button>
+            <button class="crop-handle crop-handle-n" type="button" data-crop-handle="n" aria-label="裁剪上边"></button>
+            <button class="crop-handle crop-handle-ne" type="button" data-crop-handle="ne" aria-label="裁剪右上角"></button>
+            <button class="crop-handle crop-handle-e" type="button" data-crop-handle="e" aria-label="裁剪右边"></button>
+            <button class="crop-handle crop-handle-se" type="button" data-crop-handle="se" aria-label="裁剪右下角"></button>
+            <button class="crop-handle crop-handle-s" type="button" data-crop-handle="s" aria-label="裁剪下边"></button>
+            <button class="crop-handle crop-handle-sw" type="button" data-crop-handle="sw" aria-label="裁剪左下角"></button>
+            <button class="crop-handle crop-handle-w" type="button" data-crop-handle="w" aria-label="裁剪左边"></button>
+          </div>
         </div>
       </div>
     </dialog>
@@ -386,6 +400,6 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=20260609-9"></script>
+    <script src="./app.js?v=20260609-10"></script>
   </body>
 </html>
