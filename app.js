@@ -46,7 +46,6 @@ const els = {
   compressQualityRange: document.querySelector("#compressQualityRange"),
   compressQualityOutput: document.querySelector("#compressQualityOutput"),
   compressCustomQuality: document.querySelector("#compressCustomQuality"),
-  compressMaxEdgeInput: document.querySelector("#compressMaxEdgeInput"),
   compressFormatSelect: document.querySelector("#compressFormatSelect"),
   compressButton: document.querySelector("#compressButton"),
   compressDownloadButton: document.querySelector("#compressDownloadButton"),
@@ -54,9 +53,6 @@ const els = {
   compressQualitySizes: document.querySelectorAll("[data-quality-size]"),
   compressPreviewCard: document.querySelector("#compressPreviewCard"),
   compressPreviewImage: document.querySelector("#compressPreviewImage"),
-  compressPreviewPlaceholder: document.querySelector("#compressPreviewPlaceholder"),
-  compressPreviewName: document.querySelector("#compressPreviewName"),
-  compressPreviewMeta: document.querySelector("#compressPreviewMeta"),
   template: document.querySelector("#imageCardTemplate"),
   previewModal: document.querySelector("#previewModal"),
   previewImage: document.querySelector("#previewImage"),
@@ -115,7 +111,6 @@ const KOUKOUTU_PROXY_URL = "https://young-art-be70.ste611003.workers.dev";
 const KOUKOUTU_CREDENTIALS_KEY = "imageBatchStudio.koukoutuCredentials.v1";
 const COMPRESSION_QUALITY_PRESETS = {
   high: 0.6,
-  basic: 0.75,
   low: 0.9,
 };
 let previewUrl = null;
@@ -160,7 +155,6 @@ els.compressFileInput.addEventListener("change", (event) => {
   setCompressionFiles([...event.target.files]);
   els.compressFileInput.value = "";
 });
-els.compressMaxEdgeInput.addEventListener("input", scheduleCompressionEstimate);
 els.compressFormatSelect.addEventListener("change", scheduleCompressionEstimate);
 els.compressButton.addEventListener("click", compressSelectedFiles);
 els.compressDownloadButton.addEventListener("click", downloadCompressedFiles);
@@ -310,19 +304,17 @@ async function compressSelectedFiles() {
 
 async function compressImageFile(file) {
   const canvas = await fileToCanvas(file);
-  const maxEdge = getCompressionMaxEdge();
   const quality = getSelectedCompressionQuality();
-  const scaledCanvas = resizeCanvasToMaxEdge(canvas, maxEdge);
   const mimeType = getCompressionMime(file, els.compressFormatSelect.value);
-  const blob = await canvasToBlob(scaledCanvas, mimeType, quality);
+  const blob = await canvasToBlob(canvas, mimeType, quality);
   const outputName = `${fileBaseName(file.name)}-compressed.${extensionForMime(mimeType)}`;
 
   return {
     file,
     blob,
     outputName,
-    width: scaledCanvas.width,
-    height: scaledCanvas.height,
+    width: canvas.width,
+    height: canvas.height,
   };
 }
 
@@ -391,12 +383,7 @@ function fileBaseName(name) {
 }
 
 function getSelectedCompressionQualityMode() {
-  return document.querySelector('input[name="compressQualityMode"]:checked')?.value || "basic";
-}
-
-function getCompressionMaxEdge() {
-  const value = Number(els.compressMaxEdgeInput.value);
-  return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+  return document.querySelector('input[name="compressQualityMode"]:checked')?.value || "high";
 }
 
 function getSelectedCompressionQuality() {
@@ -406,7 +393,7 @@ function getSelectedCompressionQuality() {
 
 function getCompressionQualityForMode(mode) {
   if (mode === "custom") return Number(els.compressQualityRange.value) / 100;
-  return COMPRESSION_QUALITY_PRESETS[mode] ?? COMPRESSION_QUALITY_PRESETS.basic;
+  return COMPRESSION_QUALITY_PRESETS[mode] ?? COMPRESSION_QUALITY_PRESETS.high;
 }
 
 function updateCompressionQualityControls() {
@@ -437,18 +424,16 @@ async function estimateCompressionSizes() {
   compressorState.isEstimating = true;
   updateCompressionQualitySizeLabels();
 
-  const maxEdge = getCompressionMaxEdge();
-  const modes = ["high", "basic", "low", "custom"];
+  const modes = ["high", "low", "custom"];
   const totals = Object.fromEntries(modes.map((mode) => [mode, 0]));
 
   try {
     for (const file of files) {
       const canvas = await fileToCanvas(file);
-      const scaledCanvas = resizeCanvasToMaxEdge(canvas, maxEdge);
       const mimeType = getCompressionMime(file, els.compressFormatSelect.value);
 
       for (const mode of modes) {
-        const blob = await canvasToBlob(scaledCanvas, mimeType, getCompressionQualityForMode(mode));
+        const blob = await canvasToBlob(canvas, mimeType, getCompressionQualityForMode(mode));
         totals[mode] += blob.size;
       }
 
@@ -504,19 +489,7 @@ function updateCompressionUi(statusText = "") {
 function updateCompressionPreviewCard(successfulResults) {
   const result = successfulResults[0];
   if (!result) {
-    if (!compressorState.files.length) {
-      clearCompressionPreviewCard();
-      return;
-    }
-
     clearCompressionPreviewUrl();
-    const file = compressorState.files[0];
-    els.compressPreviewPlaceholder.hidden = false;
-    els.compressPreviewName.textContent = file.name;
-    els.compressPreviewMeta.textContent = compressorState.isProcessing
-      ? "压缩中..."
-      : `${formatBytes(file.size)} · 等待压缩`;
-    els.compressPreviewCard.hidden = false;
     return;
   }
 
@@ -526,23 +499,11 @@ function updateCompressionPreviewCard(successfulResults) {
     compressionPreviewBlob = result.blob;
     els.compressPreviewImage.src = compressionPreviewUrl;
   }
-
-  els.compressPreviewPlaceholder.hidden = true;
-  const saved = Math.max(0, 1 - result.blob.size / Math.max(1, result.file.size));
-  els.compressPreviewName.textContent = result.outputName;
-  els.compressPreviewMeta.textContent = `${result.width} x ${result.height} · ${formatBytes(result.blob.size)} · ${Math.round(
-    saved * 100,
-  )}%`;
-  els.compressPreviewCard.hidden = false;
 }
 
 function clearCompressionPreviewCard() {
   clearCompressionPreviewUrl();
-  els.compressPreviewCard.hidden = true;
   els.compressPreviewImage.removeAttribute("src");
-  els.compressPreviewPlaceholder.hidden = false;
-  els.compressPreviewName.textContent = "压缩后预览";
-  els.compressPreviewMeta.textContent = "点击放大观察";
 }
 
 function clearCompressionPreviewUrl() {
@@ -688,9 +649,12 @@ function openPreview(item) {
   previewUrl = URL.createObjectURL(item.blob);
   const width = item.resultCanvas?.width ?? item.width ?? 0;
   const height = item.resultCanvas?.height ?? item.height ?? 0;
+  const isCompressionPreview = !item.resultCanvas;
   els.previewImage.src = previewUrl;
   els.previewTitle.textContent = item.outputName;
-  els.previewMeta.textContent = `${width} x ${height} · ${formatBytes(item.blob.size)}`;
+  els.previewMeta.textContent = isCompressionPreview
+    ? `压缩后大小：${formatBytes(item.blob.size)}`
+    : `${width} x ${height} · ${formatBytes(item.blob.size)}`;
   if (typeof els.previewModal.showModal === "function") {
     els.previewModal.showModal();
   } else {

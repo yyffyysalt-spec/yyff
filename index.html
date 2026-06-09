@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>批量抠图 + 高清放大</title>
-    <link rel="stylesheet" href="./styles.css?v=20260609-3" />
+    <link rel="stylesheet" href="./styles.css?v=20260609-4" />
   </head>
   <body>
     <main class="app-shell">
@@ -186,30 +186,20 @@
                   </span>
                   <span>选择图片</span>
                 </label>
-                <button class="compress-preview-card" id="compressPreviewCard" type="button" hidden>
+                <button class="compress-preview-card" id="compressPreviewCard" type="button" aria-label="查看压缩后图片">
                   <span class="compress-preview-image-wrap">
                     <img id="compressPreviewImage" alt="压缩后预览" />
-                    <span class="compress-preview-placeholder" id="compressPreviewPlaceholder">等待压缩</span>
                   </span>
-                  <span class="compress-preview-name" id="compressPreviewName">压缩后预览</span>
-                  <span class="compress-preview-meta" id="compressPreviewMeta">点击放大观察</span>
                 </button>
               </div>
               <div class="compress-settings">
                 <div class="compress-quality-grid" role="radiogroup" aria-label="压缩质量">
                   <label class="quality-card">
-                    <input type="radio" name="compressQualityMode" value="high" />
+                    <input type="radio" name="compressQualityMode" value="high" checked />
                     <span class="quality-title">高</span>
                     <span class="quality-copy">体积更小，标准质量</span>
                     <span class="quality-badge">质量 60</span>
                     <span class="quality-size" data-quality-size="high">-- KB</span>
-                  </label>
-                  <label class="quality-card">
-                    <input type="radio" name="compressQualityMode" value="basic" checked />
-                    <span class="quality-title">基本</span>
-                    <span class="quality-copy">平衡体积，清晰质量</span>
-                    <span class="quality-badge">质量 75</span>
-                    <span class="quality-size" data-quality-size="basic">-- KB</span>
                   </label>
                   <label class="quality-card">
                     <input type="radio" name="compressQualityMode" value="low" />
@@ -234,10 +224,6 @@
                   <input id="compressQualityRange" type="range" min="35" max="95" step="5" value="75" />
                 </div>
                 <div class="compress-controls">
-                  <label class="field compact-field">
-                    <span>最大边长</span>
-                    <input id="compressMaxEdgeInput" type="number" min="0" step="1" value="1600" placeholder="输入像素" />
-                  </label>
                   <label class="field compact-field">
                     <span>格式</span>
                     <select id="compressFormatSelect">
@@ -397,6 +383,6 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=20260609-3"></script>
+    <script src="./app.js?v=20260609-4"></script>
   </body>
 </html>

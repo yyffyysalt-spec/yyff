@@ -541,8 +541,7 @@ button:disabled {
   font-weight: 820;
 }
 
-.compress-head span,
-.compress-preview-meta {
+.compress-head span {
   color: var(--muted);
   font-size: 12px;
   font-weight: 760;
@@ -550,13 +549,14 @@ button:disabled {
 
 .compress-body {
   display: grid;
-  grid-template-columns: 126px minmax(0, 1fr);
+  grid-template-columns: 262px minmax(0, 1fr);
   gap: 10px;
   align-items: start;
 }
 
 .compress-file-column {
   display: grid;
+  grid-template-columns: repeat(2, 126px);
   gap: 10px;
 }
 
@@ -609,14 +609,16 @@ button:disabled {
 
 .compress-preview-card {
   display: grid;
-  gap: 7px;
+  place-items: stretch;
   width: 100%;
+  aspect-ratio: 1;
+  min-height: 126px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   background: #fff;
   color: var(--ink);
   cursor: pointer;
-  padding: 8px;
+  padding: 0;
   text-align: left;
   box-shadow: 0 2px 8px rgba(31, 46, 39, 0.06);
   transition:
@@ -631,17 +633,13 @@ button:disabled {
   transform: translateY(-1px);
 }
 
-.compress-preview-card[hidden] {
-  display: none;
-}
-
 .compress-preview-image-wrap {
   display: grid;
   place-items: center;
-  aspect-ratio: 1;
   overflow: hidden;
-  border: 1px solid rgba(216, 224, 218, 0.76);
-  border-radius: 7px;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
   background-color: #fff;
   background-image:
     linear-gradient(45deg, rgba(222, 232, 225, 0.78) 25%, transparent 25%),
@@ -671,21 +669,6 @@ button:disabled {
   display: none;
 }
 
-.compress-preview-placeholder {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 760;
-}
-
-.compress-preview-name {
-  overflow: hidden;
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 820;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .compress-settings {
   display: grid;
   gap: 10px;
@@ -693,7 +676,7 @@ button:disabled {
 
 .compress-quality-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -791,7 +774,7 @@ button:disabled {
 
 .compress-controls {
   display: grid;
-  grid-template-columns: minmax(118px, 1fr) minmax(108px, 1fr) auto auto;
+  grid-template-columns: minmax(160px, 1fr) auto auto;
   gap: 10px;
   align-items: end;
 }
@@ -1342,9 +1325,8 @@ figcaption {
     grid-template-columns: 1fr;
   }
 
-  .compress-upload {
-    width: min(180px, 100%);
-    min-height: 0;
+  .compress-file-column {
+    grid-template-columns: repeat(2, minmax(0, 126px));
   }
 
   .compress-quality-grid {
@@ -1420,6 +1402,10 @@ figcaption {
 
   .compress-controls {
     grid-template-columns: 1fr;
+  }
+
+  .compress-file-column {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .compress-quality-grid {
