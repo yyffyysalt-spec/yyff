@@ -550,8 +550,8 @@ button:disabled {
 
 .compress-body {
   display: grid;
-  grid-template-columns: 156px minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: 126px minmax(0, 1fr);
+  gap: 10px;
   align-items: start;
 }
 
@@ -561,13 +561,13 @@ button:disabled {
   justify-content: center;
   align-content: center;
   aspect-ratio: 1;
-  min-height: 156px;
-  gap: 12px;
+  min-height: 126px;
+  gap: 8px;
   border: 1.5px dashed #9cb9ad;
-  border-radius: 14px;
+  border-radius: 10px;
   background: #fff;
   color: var(--accent-strong);
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 820;
   cursor: pointer;
   text-align: center;
@@ -594,8 +594,8 @@ button:disabled {
 .compress-upload-icon {
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
+  width: 36px;
+  height: 36px;
   justify-self: center;
   border-radius: 50%;
   background: var(--accent);
@@ -604,23 +604,25 @@ button:disabled {
 
 .compress-settings {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .compress-quality-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  gap: 8px;
 }
 
 .quality-card {
   position: relative;
   display: grid;
-  min-height: 132px;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 94px;
   align-content: start;
-  gap: 8px;
-  padding: 18px 16px;
-  border: 2px solid #d9dedd;
+  gap: 5px;
+  column-gap: 6px;
+  padding: 11px;
+  border: 1.5px solid #d9dedd;
   border-radius: 8px;
   background: #fff;
   color: #182235;
@@ -639,10 +641,10 @@ button:disabled {
 
 .quality-card input {
   position: absolute;
-  top: 20px;
-  right: 16px;
-  width: 22px;
-  height: 22px;
+  top: 12px;
+  right: 12px;
+  width: 18px;
+  height: 18px;
   margin: 0;
   accent-color: #3f5cff;
 }
@@ -653,29 +655,41 @@ button:disabled {
 }
 
 .quality-title {
-  padding-right: 34px;
-  font-size: 24px;
+  grid-column: 1 / -1;
+  padding-right: 26px;
+  font-size: 18px;
   font-weight: 860;
   line-height: 1.15;
   white-space: nowrap;
 }
 
 .quality-copy {
+  grid-column: 1 / -1;
   color: #52607b;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 720;
   line-height: 1.35;
 }
 
-.quality-badge {
+.quality-badge,
+.quality-size {
   justify-self: start;
-  margin-top: 4px;
   border-radius: 7px;
-  padding: 8px 10px;
+  padding: 4px 7px;
   background: #f1f1f3;
   color: #202327;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 820;
+}
+
+.quality-badge {
+  margin-top: 2px;
+}
+
+.quality-size {
+  margin-top: 2px;
+  background: rgba(17, 135, 109, 0.09);
+  color: var(--accent-strong);
 }
 
 .compress-custom-quality {

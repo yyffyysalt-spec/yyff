@@ -6,6 +6,9 @@ const state = {
 const compressorState = {
   files: [],
   results: [],
+  estimates: {},
+  isEstimating: false,
+  estimateRunId: 0,
   isProcessing: false,
 };
 
@@ -49,6 +52,7 @@ const els = {
   compressDownloadButton: document.querySelector("#compressDownloadButton"),
   compressStatus: document.querySelector("#compressStatus"),
   compressList: document.querySelector("#compressList"),
+  compressQualitySizes: document.querySelectorAll("[data-quality-size]"),
   template: document.querySelector("#imageCardTemplate"),
   previewModal: document.querySelector("#previewModal"),
   previewImage: document.querySelector("#previewImage"),
@@ -130,6 +134,7 @@ let eraserRemovedTotal = 0;
 let eraserPreviewPointer = null;
 let eraserLastPoint = null;
 let editBackgroundColor = null;
+let compressionEstimateTimer = null;
 
 els.toleranceRange.addEventListener("input", () => {
   els.toleranceOutput.value = els.toleranceRange.value;
@@ -137,14 +142,20 @@ els.toleranceRange.addEventListener("input", () => {
 
 els.compressQualityRange.addEventListener("input", () => {
   els.compressQualityOutput.value = els.compressQualityRange.value;
+  scheduleCompressionEstimate();
 });
 document.querySelectorAll('input[name="compressQualityMode"]').forEach((input) => {
-  input.addEventListener("change", updateCompressionQualityControls);
+  input.addEventListener("change", () => {
+    updateCompressionQualityControls();
+    scheduleCompressionEstimate();
+  });
 });
 els.compressFileInput.addEventListener("change", (event) => {
   setCompressionFiles([...event.target.files]);
   els.compressFileInput.value = "";
 });
+els.compressMaxEdgeSelect.addEventListener("change", scheduleCompressionEstimate);
+els.compressFormatSelect.addEventListener("change", scheduleCompressionEstimate);
 els.compressButton.addEventListener("click", compressSelectedFiles);
 els.compressDownloadButton.addEventListener("click", downloadCompressedFiles);
 els.modelSelect.addEventListener("change", () => {
@@ -260,7 +271,10 @@ els.checkerToggle.addEventListener("change", () => {
 function setCompressionFiles(files) {
   compressorState.files = files.filter((file) => file.type.startsWith("image/") || /\.gif$/i.test(file.name));
   compressorState.results = [];
+  compressorState.estimates = {};
+  compressorState.estimateRunId += 1;
   updateCompressionUi();
+  scheduleCompressionEstimate();
 }
 
 async function compressSelectedFiles() {
@@ -376,6 +390,10 @@ function getSelectedCompressionQualityMode() {
 
 function getSelectedCompressionQuality() {
   const mode = getSelectedCompressionQualityMode();
+  return getCompressionQualityForMode(mode);
+}
+
+function getCompressionQualityForMode(mode) {
   if (mode === "custom") return Number(els.compressQualityRange.value) / 100;
   return COMPRESSION_QUALITY_PRESETS[mode] ?? COMPRESSION_QUALITY_PRESETS.basic;
 }
@@ -385,6 +403,74 @@ function updateCompressionQualityControls() {
   els.compressCustomQuality.hidden = !isCustom;
   els.compressQualityRange.disabled = !isCustom;
   els.compressQualityOutput.value = els.compressQualityRange.value;
+}
+
+function scheduleCompressionEstimate() {
+  clearTimeout(compressionEstimateTimer);
+  compressorState.estimates = {};
+  updateCompressionQualitySizeLabels();
+  compressionEstimateTimer = setTimeout(estimateCompressionSizes, 180);
+}
+
+async function estimateCompressionSizes() {
+  const files = [...compressorState.files];
+  const runId = ++compressorState.estimateRunId;
+
+  if (!files.length) {
+    compressorState.isEstimating = false;
+    compressorState.estimates = {};
+    updateCompressionQualitySizeLabels();
+    return;
+  }
+
+  compressorState.isEstimating = true;
+  updateCompressionQualitySizeLabels();
+
+  const maxEdge = Number(els.compressMaxEdgeSelect.value);
+  const modes = ["high", "basic", "low", "custom"];
+  const totals = Object.fromEntries(modes.map((mode) => [mode, 0]));
+
+  try {
+    for (const file of files) {
+      const canvas = await fileToCanvas(file);
+      const scaledCanvas = resizeCanvasToMaxEdge(canvas, maxEdge);
+      const mimeType = getCompressionMime(file, els.compressFormatSelect.value);
+
+      for (const mode of modes) {
+        const blob = await canvasToBlob(scaledCanvas, mimeType, getCompressionQualityForMode(mode));
+        totals[mode] += blob.size;
+      }
+
+      if (runId !== compressorState.estimateRunId) return;
+    }
+
+    if (runId !== compressorState.estimateRunId) return;
+    compressorState.estimates = totals;
+  } catch (error) {
+    if (runId === compressorState.estimateRunId) compressorState.estimates = {};
+  } finally {
+    if (runId === compressorState.estimateRunId) {
+      compressorState.isEstimating = false;
+      updateCompressionQualitySizeLabels();
+    }
+  }
+}
+
+function updateCompressionQualitySizeLabels() {
+  els.compressQualitySizes.forEach((label) => {
+    const mode = label.dataset.qualitySize;
+    const estimate = compressorState.estimates[mode];
+
+    if (!compressorState.files.length) {
+      label.textContent = "-- KB";
+    } else if (compressorState.isEstimating) {
+      label.textContent = "估算中";
+    } else if (estimate) {
+      label.textContent = `约 ${formatBytes(estimate)}`;
+    } else {
+      label.textContent = "-- KB";
+    }
+  });
 }
 
 function updateCompressionUi(statusText = "") {
@@ -423,6 +509,8 @@ function updateCompressionUi(statusText = "") {
     row.append(name, meta);
     els.compressList.append(row);
   }
+
+  updateCompressionQualitySizeLabels();
 }
 
 async function downloadCompressedFiles() {

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>批量抠图 + 高清放大</title>
-    <link rel="stylesheet" href="./styles.css?v=20260609-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260609-2" />
   </head>
   <body>
     <main class="app-shell">
@@ -192,24 +192,28 @@
                     <span class="quality-title">高</span>
                     <span class="quality-copy">体积更小，标准质量</span>
                     <span class="quality-badge">质量 60</span>
+                    <span class="quality-size" data-quality-size="high">-- KB</span>
                   </label>
                   <label class="quality-card">
                     <input type="radio" name="compressQualityMode" value="basic" checked />
                     <span class="quality-title">基本</span>
                     <span class="quality-copy">平衡体积，清晰质量</span>
                     <span class="quality-badge">质量 75</span>
+                    <span class="quality-size" data-quality-size="basic">-- KB</span>
                   </label>
                   <label class="quality-card">
                     <input type="radio" name="compressQualityMode" value="low" />
                     <span class="quality-title">低</span>
                     <span class="quality-copy">体积较大，更高质量</span>
                     <span class="quality-badge">质量 90</span>
+                    <span class="quality-size" data-quality-size="low">-- KB</span>
                   </label>
                   <label class="quality-card">
                     <input type="radio" name="compressQualityMode" value="custom" />
                     <span class="quality-title">自定义</span>
                     <span class="quality-copy">手动调节压缩质量</span>
                     <span class="quality-badge">手动选择</span>
+                    <span class="quality-size" data-quality-size="custom">-- KB</span>
                   </label>
                 </div>
                 <div class="compress-custom-quality" id="compressCustomQuality" hidden>
@@ -390,6 +394,6 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=20260609-1"></script>
+    <script src="./app.js?v=20260609-2"></script>
   </body>
 </html>
