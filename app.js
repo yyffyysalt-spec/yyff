@@ -113,6 +113,7 @@ const COMPRESSION_QUALITY_PRESETS = {
   high: 0.6,
   low: 0.9,
 };
+const COMPRESSION_FALLBACK_MIMES = ["image/webp", "image/jpeg", "image/png"];
 let previewUrl = null;
 let previewItem = null;
 let editItem = null;
@@ -306,12 +307,12 @@ async function compressImageFile(file) {
   const canvas = await fileToCanvas(file);
   const quality = getSelectedCompressionQuality();
   const mimeType = getCompressionMime(file, els.compressFormatSelect.value);
-  const blob = await canvasToBlob(canvas, mimeType, quality);
-  const outputName = `${fileBaseName(file.name)}-compressed.${extensionForMime(mimeType)}`;
+  const compressed = await getSmallestCompressionResult(canvas, file, mimeType, quality);
+  const outputName = `${fileBaseName(file.name)}-compressed.${extensionForMime(compressed.mimeType, file.name)}`;
 
   return {
     file,
-    blob,
+    blob: compressed.blob,
     outputName,
     width: canvas.width,
     height: canvas.height,
@@ -375,6 +376,7 @@ function getCompressionMime(file, selectedFormat) {
 function extensionForMime(mimeType) {
   if (mimeType === "image/jpeg") return "jpg";
   if (mimeType === "image/png") return "png";
+  if (mimeType === "image/gif") return "gif";
   return "webp";
 }
 
@@ -433,8 +435,8 @@ async function estimateCompressionSizes() {
       const mimeType = getCompressionMime(file, els.compressFormatSelect.value);
 
       for (const mode of modes) {
-        const blob = await canvasToBlob(canvas, mimeType, getCompressionQualityForMode(mode));
-        totals[mode] += blob.size;
+        const compressed = await getSmallestCompressionResult(canvas, file, mimeType, getCompressionQualityForMode(mode));
+        totals[mode] += compressed.blob.size;
       }
 
       if (runId !== compressorState.estimateRunId) return;
@@ -450,6 +452,61 @@ async function estimateCompressionSizes() {
       updateCompressionQualitySizeLabels();
     }
   }
+}
+
+async function getSmallestCompressionResult(canvas, file, preferredMimeType, quality) {
+  const hasTransparency = canvasHasTransparency(canvas);
+  const candidates = [...new Set([preferredMimeType, ...COMPRESSION_FALLBACK_MIMES])].filter(
+    (mimeType) => mimeType !== "image/jpeg" || !hasTransparency,
+  );
+  const encoded = [];
+
+  for (const mimeType of candidates) {
+    try {
+      const blob = await canvasToBlob(canvas, mimeType, quality);
+      encoded.push({ blob, mimeType });
+    } catch (error) {
+      // Some browsers may not support every export format.
+    }
+  }
+
+  const smallerResults = encoded.filter((result) => result.blob.size < file.size);
+  const bestEncoded = getSmallestBlobResult(smallerResults.length ? smallerResults : encoded);
+  if (bestEncoded && bestEncoded.blob.size < file.size) return bestEncoded;
+
+  return {
+    blob: file,
+    mimeType: getOriginalMime(file),
+  };
+}
+
+function getSmallestBlobResult(results) {
+  return results.reduce((best, result) => {
+    if (!best || result.blob.size < best.blob.size) return result;
+    return best;
+  }, null);
+}
+
+function getOriginalMime(file) {
+  return file.type?.startsWith("image/") ? file.type : "image/png";
+}
+
+function canvasHasTransparency(canvas) {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const stride = Math.max(1, Math.ceil(Math.sqrt((canvas.width * canvas.height) / 60000)));
+
+  try {
+    for (let y = 0; y < canvas.height; y += stride) {
+      const row = ctx.getImageData(0, y, canvas.width, 1).data;
+      for (let x = 3; x < row.length; x += stride * 4) {
+        if (row[x] < 255) return true;
+      }
+    }
+  } catch (error) {
+    return true;
+  }
+
+  return false;
 }
 
 function updateCompressionQualitySizeLabels() {
