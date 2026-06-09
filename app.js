@@ -46,13 +46,17 @@ const els = {
   compressQualityRange: document.querySelector("#compressQualityRange"),
   compressQualityOutput: document.querySelector("#compressQualityOutput"),
   compressCustomQuality: document.querySelector("#compressCustomQuality"),
-  compressMaxEdgeSelect: document.querySelector("#compressMaxEdgeSelect"),
+  compressMaxEdgeInput: document.querySelector("#compressMaxEdgeInput"),
   compressFormatSelect: document.querySelector("#compressFormatSelect"),
   compressButton: document.querySelector("#compressButton"),
   compressDownloadButton: document.querySelector("#compressDownloadButton"),
   compressStatus: document.querySelector("#compressStatus"),
-  compressList: document.querySelector("#compressList"),
   compressQualitySizes: document.querySelectorAll("[data-quality-size]"),
+  compressPreviewCard: document.querySelector("#compressPreviewCard"),
+  compressPreviewImage: document.querySelector("#compressPreviewImage"),
+  compressPreviewPlaceholder: document.querySelector("#compressPreviewPlaceholder"),
+  compressPreviewName: document.querySelector("#compressPreviewName"),
+  compressPreviewMeta: document.querySelector("#compressPreviewMeta"),
   template: document.querySelector("#imageCardTemplate"),
   previewModal: document.querySelector("#previewModal"),
   previewImage: document.querySelector("#previewImage"),
@@ -135,6 +139,8 @@ let eraserPreviewPointer = null;
 let eraserLastPoint = null;
 let editBackgroundColor = null;
 let compressionEstimateTimer = null;
+let compressionPreviewUrl = null;
+let compressionPreviewBlob = null;
 
 els.toleranceRange.addEventListener("input", () => {
   els.toleranceOutput.value = els.toleranceRange.value;
@@ -154,10 +160,11 @@ els.compressFileInput.addEventListener("change", (event) => {
   setCompressionFiles([...event.target.files]);
   els.compressFileInput.value = "";
 });
-els.compressMaxEdgeSelect.addEventListener("change", scheduleCompressionEstimate);
+els.compressMaxEdgeInput.addEventListener("input", scheduleCompressionEstimate);
 els.compressFormatSelect.addEventListener("change", scheduleCompressionEstimate);
 els.compressButton.addEventListener("click", compressSelectedFiles);
 els.compressDownloadButton.addEventListener("click", downloadCompressedFiles);
+els.compressPreviewCard.addEventListener("click", openCompressionPreview);
 els.modelSelect.addEventListener("change", () => {
   updateApiControls();
   updateUi();
@@ -273,6 +280,7 @@ function setCompressionFiles(files) {
   compressorState.results = [];
   compressorState.estimates = {};
   compressorState.estimateRunId += 1;
+  clearCompressionPreviewCard();
   updateCompressionUi();
   scheduleCompressionEstimate();
 }
@@ -302,7 +310,7 @@ async function compressSelectedFiles() {
 
 async function compressImageFile(file) {
   const canvas = await fileToCanvas(file);
-  const maxEdge = Number(els.compressMaxEdgeSelect.value);
+  const maxEdge = getCompressionMaxEdge();
   const quality = getSelectedCompressionQuality();
   const scaledCanvas = resizeCanvasToMaxEdge(canvas, maxEdge);
   const mimeType = getCompressionMime(file, els.compressFormatSelect.value);
@@ -369,9 +377,7 @@ function resizeCanvasToMaxEdge(canvas, maxEdge) {
 }
 
 function getCompressionMime(file, selectedFormat) {
-  if (selectedFormat !== "auto") return selectedFormat;
-  if (/jpe?g/i.test(file.type)) return "image/jpeg";
-  return "image/webp";
+  return selectedFormat || "image/png";
 }
 
 function extensionForMime(mimeType) {
@@ -386,6 +392,11 @@ function fileBaseName(name) {
 
 function getSelectedCompressionQualityMode() {
   return document.querySelector('input[name="compressQualityMode"]:checked')?.value || "basic";
+}
+
+function getCompressionMaxEdge() {
+  const value = Number(els.compressMaxEdgeInput.value);
+  return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
 }
 
 function getSelectedCompressionQuality() {
@@ -426,7 +437,7 @@ async function estimateCompressionSizes() {
   compressorState.isEstimating = true;
   updateCompressionQualitySizeLabels();
 
-  const maxEdge = Number(els.compressMaxEdgeSelect.value);
+  const maxEdge = getCompressionMaxEdge();
   const modes = ["high", "basic", "low", "custom"];
   const totals = Object.fromEntries(modes.map((mode) => [mode, 0]));
 
@@ -485,32 +496,67 @@ function updateCompressionUi(statusText = "") {
       : selectedText);
   els.compressButton.disabled = !compressorState.files.length || compressorState.isProcessing;
   els.compressDownloadButton.disabled = !successful.length || compressorState.isProcessing;
-  els.compressList.replaceChildren();
 
-  for (const file of compressorState.files) {
-    const result = compressorState.results.find((item) => item.file === file);
-    const row = document.createElement("div");
-    row.className = "compress-item";
-    const name = document.createElement("strong");
-    name.textContent = file.name;
-    const meta = document.createElement("span");
+  updateCompressionPreviewCard(successful);
+  updateCompressionQualitySizeLabels();
+}
 
-    if (!result) {
-      meta.textContent = compressorState.isProcessing ? "等待中" : formatBytes(file.size);
-    } else if (result.error) {
-      meta.className = "is-error";
-      meta.textContent = result.error;
-    } else {
-      const saved = Math.max(0, 1 - result.blob.size / Math.max(1, file.size));
-      meta.className = "is-ok";
-      meta.textContent = `${formatBytes(file.size)} -> ${formatBytes(result.blob.size)} · ${Math.round(saved * 100)}%`;
+function updateCompressionPreviewCard(successfulResults) {
+  const result = successfulResults[0];
+  if (!result) {
+    if (!compressorState.files.length) {
+      clearCompressionPreviewCard();
+      return;
     }
 
-    row.append(name, meta);
-    els.compressList.append(row);
+    clearCompressionPreviewUrl();
+    const file = compressorState.files[0];
+    els.compressPreviewPlaceholder.hidden = false;
+    els.compressPreviewName.textContent = file.name;
+    els.compressPreviewMeta.textContent = compressorState.isProcessing
+      ? "压缩中..."
+      : `${formatBytes(file.size)} · 等待压缩`;
+    els.compressPreviewCard.hidden = false;
+    return;
   }
 
-  updateCompressionQualitySizeLabels();
+  if (compressionPreviewBlob !== result.blob) {
+    if (compressionPreviewUrl) URL.revokeObjectURL(compressionPreviewUrl);
+    compressionPreviewUrl = URL.createObjectURL(result.blob);
+    compressionPreviewBlob = result.blob;
+    els.compressPreviewImage.src = compressionPreviewUrl;
+  }
+
+  els.compressPreviewPlaceholder.hidden = true;
+  const saved = Math.max(0, 1 - result.blob.size / Math.max(1, result.file.size));
+  els.compressPreviewName.textContent = result.outputName;
+  els.compressPreviewMeta.textContent = `${result.width} x ${result.height} · ${formatBytes(result.blob.size)} · ${Math.round(
+    saved * 100,
+  )}%`;
+  els.compressPreviewCard.hidden = false;
+}
+
+function clearCompressionPreviewCard() {
+  clearCompressionPreviewUrl();
+  els.compressPreviewCard.hidden = true;
+  els.compressPreviewImage.removeAttribute("src");
+  els.compressPreviewPlaceholder.hidden = false;
+  els.compressPreviewName.textContent = "压缩后预览";
+  els.compressPreviewMeta.textContent = "点击放大观察";
+}
+
+function clearCompressionPreviewUrl() {
+  if (compressionPreviewUrl) {
+    URL.revokeObjectURL(compressionPreviewUrl);
+    compressionPreviewUrl = null;
+  }
+  compressionPreviewBlob = null;
+  els.compressPreviewImage.removeAttribute("src");
+}
+
+function openCompressionPreview() {
+  const result = compressorState.results.find((item) => item.blob);
+  if (result) openPreview(result);
 }
 
 async function downloadCompressedFiles() {
@@ -640,9 +686,11 @@ function openPreview(item) {
   clearPreviewModal();
   previewItem = item;
   previewUrl = URL.createObjectURL(item.blob);
+  const width = item.resultCanvas?.width ?? item.width ?? 0;
+  const height = item.resultCanvas?.height ?? item.height ?? 0;
   els.previewImage.src = previewUrl;
   els.previewTitle.textContent = item.outputName;
-  els.previewMeta.textContent = `${item.resultCanvas.width} x ${item.resultCanvas.height} · ${formatBytes(item.blob.size)}`;
+  els.previewMeta.textContent = `${width} x ${height} · ${formatBytes(item.blob.size)}`;
   if (typeof els.previewModal.showModal === "function") {
     els.previewModal.showModal();
   } else {
