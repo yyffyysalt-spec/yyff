@@ -275,6 +275,7 @@ function setCompressionFiles(files) {
   compressorState.results = [];
   compressorState.estimates = {};
   compressorState.estimateRunId += 1;
+  if (compressorState.files.some(isGifFile)) els.compressFormatSelect.value = "image/gif";
   clearCompressionPreviewCard();
   updateCompressionUi();
   scheduleCompressionEstimate();
@@ -304,19 +305,32 @@ async function compressSelectedFiles() {
 }
 
 async function compressImageFile(file) {
-  const canvas = await fileToCanvas(file);
   const quality = getSelectedCompressionQuality();
   const mimeType = getCompressionMime(file, els.compressFormatSelect.value);
-  const compressed =
-    mimeType === "image/gif"
-      ? canvasToGifResult(canvas)
-      : await getSmallestCompressionResult(canvas, file, mimeType, quality);
+  const compressed = await compressFileToMime(file, mimeType, quality);
   const outputName = `${fileBaseName(file.name)}-compressed.${extensionForMime(compressed.mimeType, file.name)}`;
 
   return {
     file,
     blob: compressed.blob,
     outputName,
+    width: compressed.width,
+    height: compressed.height,
+  };
+}
+
+async function compressFileToMime(file, mimeType, quality) {
+  if (mimeType === "image/gif" && isGifFile(file)) return compressAnimatedGifFile(file, quality);
+
+  const canvas = await fileToCanvas(file);
+  const compressed =
+    mimeType === "image/gif"
+      ? canvasToGifResult(canvas)
+      : await getSmallestCompressionResult(canvas, file, mimeType, quality);
+
+  return {
+    blob: compressed.blob,
+    mimeType: compressed.mimeType,
     width: canvas.width,
     height: canvas.height,
   };
@@ -373,7 +387,12 @@ function resizeCanvasToMaxEdge(canvas, maxEdge) {
 }
 
 function getCompressionMime(file, selectedFormat) {
+  if (isGifFile(file)) return "image/gif";
   return selectedFormat || "image/png";
+}
+
+function isGifFile(file) {
+  return file.type === "image/gif" || /\.gif$/i.test(file.name);
 }
 
 function extensionForMime(mimeType) {
@@ -434,15 +453,19 @@ async function estimateCompressionSizes() {
 
   try {
     for (const file of files) {
-      const canvas = await fileToCanvas(file);
       const mimeType = getCompressionMime(file, els.compressFormatSelect.value);
+      const canvas = mimeType === "image/gif" && isGifFile(file) ? null : await fileToCanvas(file);
 
       for (const mode of modes) {
-        const compressed =
-          mimeType === "image/gif"
-            ? canvasToGifResult(canvas)
-            : await getSmallestCompressionResult(canvas, file, mimeType, getCompressionQualityForMode(mode));
-        totals[mode] += compressed.blob.size;
+        if (mimeType === "image/gif" && isGifFile(file)) {
+          totals[mode] += estimateAnimatedGifSize(file, getCompressionQualityForMode(mode));
+        } else {
+          const compressed =
+            mimeType === "image/gif"
+              ? canvasToGifResult(canvas)
+              : await getSmallestCompressionResult(canvas, file, mimeType, getCompressionQualityForMode(mode));
+          totals[mode] += compressed.blob.size;
+        }
       }
 
       if (runId !== compressorState.estimateRunId) return;
@@ -497,6 +520,157 @@ function getOriginalMime(file) {
   return file.type?.startsWith("image/") ? file.type : "image/png";
 }
 
+async function compressAnimatedGifFile(file, quality) {
+  const timing = await readGifTiming(file);
+
+  if (timing.frameCount <= 1) {
+    const canvas = await fileToCanvas(file);
+    const result = canvasToGifResult(canvas);
+    return {
+      blob: result.blob.size < file.size ? result.blob : file,
+      mimeType: "image/gif",
+      width: canvas.width,
+      height: canvas.height,
+    };
+  }
+
+  const image = await loadImageElement(file);
+  const canvas = document.createElement("canvas");
+  canvas.width = image.naturalWidth || image.width;
+  canvas.height = image.naturalHeight || image.height;
+
+  const plan = getAnimatedGifCapturePlan(timing, quality);
+  const frames = [];
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+  for (let index = 0; index < plan.frameCount; index += 1) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    frames.push(canvasToGifFrame(canvas));
+    await wait(plan.intervalMs);
+    await nextFrame();
+  }
+
+  image.release();
+  const blob = animatedGifBlob(canvas.width, canvas.height, frames, plan.delayCs);
+
+  return {
+    blob: blob.size < file.size ? blob : file,
+    mimeType: "image/gif",
+    width: canvas.width,
+    height: canvas.height,
+  };
+}
+
+function estimateAnimatedGifSize(file, quality) {
+  const ratio = clampNumber(0.45 + quality * 0.45, 0.62, 0.92);
+  return Math.max(1024, Math.min(file.size, Math.round(file.size * ratio)));
+}
+
+async function readGifTiming(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes.length < 13 || asciiFromBytes(bytes, 0, 3) !== "GIF") {
+    return { frameCount: 1, totalDurationMs: 100 };
+  }
+
+  let offset = 13;
+  const globalColorTableSize = bytes[10] & 0x80 ? 3 * (1 << ((bytes[10] & 0x07) + 1)) : 0;
+  offset += globalColorTableSize;
+
+  let frameCount = 0;
+  let totalDelayCs = 0;
+  let pendingDelayCs = 10;
+
+  while (offset < bytes.length) {
+    const marker = bytes[offset];
+    offset += 1;
+
+    if (marker === 0x3b) break;
+
+    if (marker === 0x21) {
+      const label = bytes[offset];
+      offset += 1;
+
+      if (label === 0xf9 && bytes[offset] === 0x04) {
+        pendingDelayCs = bytes[offset + 2] | (bytes[offset + 3] << 8);
+        if (!pendingDelayCs) pendingDelayCs = 10;
+        offset += 6;
+      } else {
+        offset = skipGifSubBlocks(bytes, offset);
+      }
+      continue;
+    }
+
+    if (marker === 0x2c) {
+      if (offset + 9 > bytes.length) break;
+      const packed = bytes[offset + 8];
+      offset += 9;
+      if (packed & 0x80) offset += 3 * (1 << ((packed & 0x07) + 1));
+      offset += 1;
+      offset = skipGifSubBlocks(bytes, offset);
+      frameCount += 1;
+      totalDelayCs += pendingDelayCs || 10;
+      pendingDelayCs = 10;
+      continue;
+    }
+
+    break;
+  }
+
+  return {
+    frameCount: Math.max(1, frameCount),
+    totalDurationMs: Math.max(100, totalDelayCs * 10),
+  };
+}
+
+function skipGifSubBlocks(bytes, offset) {
+  while (offset < bytes.length) {
+    const length = bytes[offset];
+    offset += 1;
+    if (!length) break;
+    offset += length;
+  }
+  return offset;
+}
+
+function asciiFromBytes(bytes, offset, length) {
+  return String.fromCharCode(...bytes.slice(offset, offset + length));
+}
+
+function getAnimatedGifCapturePlan(timing, quality) {
+  const maxFrames = Math.round(18 + quality * 60);
+  const durationMs = Math.min(Math.max(timing.totalDurationMs || 1000, 300), 10000);
+  const frameCount = Math.max(1, Math.min(timing.frameCount || maxFrames, maxFrames));
+  const intervalMs = Math.max(40, Math.round(durationMs / frameCount));
+
+  return {
+    frameCount,
+    intervalMs,
+    delayCs: Math.max(2, Math.round(intervalMs / 10)),
+  };
+}
+
+function loadImageElement(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+
+    image.onload = () => {
+      image.release = () => URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("GIF 动图读取失败"));
+    };
+    image.src = url;
+  });
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function canvasToGifResult(canvas) {
   return {
     blob: canvasToGifBlob(canvas),
@@ -506,10 +680,15 @@ function canvasToGifResult(canvas) {
 
 function canvasToGifBlob(canvas) {
   const { width, height } = canvas;
+  const frame = canvasToGifFrame(canvas);
+  return animatedGifBlob(width, height, [frame], 0);
+}
+
+function canvasToGifFrame(canvas) {
+  const { width, height } = canvas;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   const rgba = ctx.getImageData(0, 0, width, height).data;
   const indexedPixels = new Uint8Array(width * height);
-  const palette = buildGifPalette();
   let hasTransparency = false;
 
   for (let source = 0, target = 0; source < rgba.length; source += 4, target += 1) {
@@ -523,7 +702,11 @@ function canvasToGifBlob(canvas) {
     indexedPixels[target] = quantizeGifColor(rgba[source], rgba[source + 1], rgba[source + 2]);
   }
 
-  const lzwData = encodeGifLzw(indexedPixels, 8);
+  return { indexedPixels, hasTransparency };
+}
+
+function animatedGifBlob(width, height, frames, delayCs) {
+  const palette = buildGifPalette();
   const parts = [
     asciiBytes("GIF89a"),
     wordBytes(width),
@@ -532,20 +715,31 @@ function canvasToGifBlob(canvas) {
     palette,
   ];
 
-  if (hasTransparency) {
-    parts.push(new Uint8Array([0x21, 0xf9, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00]));
+  if (frames.length > 1) {
+    parts.push(
+      new Uint8Array([0x21, 0xff, 0x0b]),
+      asciiBytes("NETSCAPE2.0"),
+      new Uint8Array([0x03, 0x01, 0x00, 0x00, 0x00]),
+    );
   }
 
-  parts.push(
-    new Uint8Array([0x2c]),
-    wordBytes(0),
-    wordBytes(0),
-    wordBytes(width),
-    wordBytes(height),
-    new Uint8Array([0x00, 0x08]),
-    gifSubBlocks(lzwData),
-    new Uint8Array([0x3b]),
-  );
+  frames.forEach((frame) => {
+    const lzwData = encodeGifLzw(frame.indexedPixels, 8);
+    parts.push(
+      new Uint8Array([0x21, 0xf9, 0x04, frame.hasTransparency ? 0x01 : 0x00]),
+      wordBytes(delayCs),
+      new Uint8Array([0x00, 0x00]),
+      new Uint8Array([0x2c]),
+      wordBytes(0),
+      wordBytes(0),
+      wordBytes(width),
+      wordBytes(height),
+      new Uint8Array([0x00, 0x08]),
+      gifSubBlocks(lzwData),
+    );
+  });
+
+  parts.push(new Uint8Array([0x3b]));
 
   return new Blob(parts, { type: "image/gif" });
 }
@@ -2790,4 +2984,8 @@ function nextFrame() {
 
 function clamp(value) {
   return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function clampNumber(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
