@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>批量抠图 + 高清放大</title>
-    <link rel="stylesheet" href="./styles.css?v=20260609-13" />
+    <link rel="stylesheet" href="./styles.css?v=20260610-1" />
   </head>
   <body>
     <main class="app-shell">
@@ -60,6 +60,13 @@
                 <option value="2">2x</option>
                 <option value="3">3x</option>
                 <option value="4">4x</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>放大方式</span>
+              <select id="upscaleProviderSelect">
+                <option value="canvas-resize" selected>普通放大</option>
+                <option value="ai-enhance">AI 高清增强</option>
               </select>
             </label>
             <label class="field">
@@ -400,6 +407,6 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=20260609-13"></script>
+    <script src="./app.js?v=20260610-1"></script>
   </body>
 </html>

@@ -33,6 +33,7 @@ const els = {
   koukoutuCheckCreditsButton: document.querySelector("#koukoutuCheckCreditsButton"),
   koukoutuCreditStatus: document.querySelector("#koukoutuCreditStatus"),
   scaleSelect: document.querySelector("#scaleSelect"),
+  upscaleProviderSelect: document.querySelector("#upscaleProviderSelect"),
   featherSelect: document.querySelector("#featherSelect"),
   shrinkSelect: document.querySelector("#shrinkSelect"),
   trimToggle: document.querySelector("#trimToggle"),
@@ -104,6 +105,23 @@ const MODEL_PRESETS = {
   koukoutu: {
     matting: "koukoutu",
     toleranceScale: 1,
+  },
+};
+const UPSCALE_PROVIDERS = {
+  "canvas-resize": {
+    label: "普通放大",
+    async process(canvas, options) {
+      const safeScale = getSafeScale(canvas, options.scale);
+      const output = upscaleCanvas(canvas, safeScale);
+      if (options.sharpen) sharpenCanvas(output);
+      return output;
+    },
+  },
+  "ai-enhance": {
+    label: "AI 高清增强",
+    async process() {
+      throw new Error("AI 高清增强暂未配置，请先使用普通放大。");
+    },
   },
 };
 const PIXIAN_API_URL = "https://api.pixian.ai/api/v2/remove-background";
@@ -2240,9 +2258,7 @@ async function processItem(item, options) {
   if (options.mode !== "upscale" && options.trim) canvas = trimTransparent(canvas);
 
   if (options.mode !== "cutout") {
-    const safeScale = getSafeScale(canvas, options.scale);
-    canvas = upscaleCanvas(canvas, safeScale);
-    if (options.sharpen) sharpenCanvas(canvas);
+    canvas = await upscaleWithProvider(canvas, options);
   }
 
   canvas = applyOutputBackground(canvas, options.backgroundColor);
@@ -2258,6 +2274,7 @@ function readOptions() {
     model,
     matting: preset.matting,
     scale: Number(els.scaleSelect.value),
+    upscaleProvider: els.upscaleProviderSelect.value,
     tolerance: Number(els.toleranceRange.value) * preset.toleranceScale,
     feather: Number(els.featherSelect.value),
     shrink: Number(els.shrinkSelect.value),
@@ -3119,6 +3136,11 @@ function getSafeScale(canvas, requestedScale) {
   const requestedPixels = canvas.width * requestedScale * canvas.height * requestedScale;
   if (requestedPixels <= MAX_OUTPUT_PIXELS) return requestedScale;
   return Math.max(1, Math.floor(Math.sqrt(MAX_OUTPUT_PIXELS / (canvas.width * canvas.height))));
+}
+
+async function upscaleWithProvider(canvas, options) {
+  const provider = UPSCALE_PROVIDERS[options.upscaleProvider] ?? UPSCALE_PROVIDERS["canvas-resize"];
+  return provider.process(canvas, options);
 }
 
 function upscaleCanvas(canvas, scale) {
