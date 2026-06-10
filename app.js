@@ -1219,7 +1219,11 @@ async function processQueue() {
       item.resultCanvas.classList.add("is-previewable");
       setCardStatus(item, "已完成", "is-done");
     } catch (error) {
-      console.error(error);
+      if (isExpectedProcessingError(error)) {
+        console.warn(error.message);
+      } else {
+        console.error(error);
+      }
       setCardStatus(item, getProcessingErrorText(error), "is-error");
     }
     done += 1;
@@ -2628,6 +2632,11 @@ function normalizeKoukoutuProxyUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
 }
 
+function isExpectedProcessingError(error) {
+  const message = String(error?.message || error || "");
+  return /AI 高清增强暂未配置/.test(message);
+}
+
 function getProcessingErrorText(error) {
   const message = String(error?.message || error || "处理失败").trim();
   if (/failed to fetch|networkerror|load failed/i.test(message) && els.modelSelect.value === "koukoutu") {
@@ -2683,25 +2692,52 @@ async function blobToCanvas(blob) {
 }
 
 function removeBackground(canvas, options) {
+  const { alphaMask, width, height } = generateMask(canvas, options);
+  const output = applyMaskToRGBA(canvas, alphaMask);
+  const ctx = output.getContext("2d", { willReadFrequently: true });
+  const image = ctx.getImageData(0, 0, width, height);
+  const data = image.data;
+
+  if (options.shrink > 0) shrinkEdges(data, alphaMask, width, height, options.shrink);
+  if (options.feather > 0) softenEdges(data, alphaMask, width, height, options.feather);
+
+  ctx.putImageData(image, 0, 0);
+  return output;
+}
+
+function generateMask(canvas, options) {
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const data = image.data;
   const { width, height } = image;
   const bg = estimateBackground(data, width, height);
-  const mask =
+  const alphaMask =
     options.matting === "standard"
       ? floodFillBackground(data, width, height, bg, options.tolerance)
       : floodFillBackgroundSmart(data, width, height, bg, options);
 
-  for (let i = 0; i < mask.length; i += 1) {
-    if (mask[i]) data[i * 4 + 3] = 0;
+  return { alphaMask, width, height, background: bg };
+}
+
+function applyMaskToRGBA(canvas, alphaMask) {
+  const output = document.createElement("canvas");
+  output.width = canvas.width;
+  output.height = canvas.height;
+  const ctx = output.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(canvas, 0, 0);
+  const image = ctx.getImageData(0, 0, output.width, output.height);
+  const data = image.data;
+
+  if (alphaMask.length !== output.width * output.height) {
+    throw new Error("Mask size does not match image size");
   }
 
-  if (options.shrink > 0) shrinkEdges(data, mask, width, height, options.shrink);
-  if (options.feather > 0) softenEdges(data, mask, width, height, options.feather);
+  for (let i = 0; i < alphaMask.length; i += 1) {
+    if (alphaMask[i]) data[i * 4 + 3] = 0;
+  }
 
   ctx.putImageData(image, 0, 0);
-  return canvas;
+  return output;
 }
 
 function estimateBackground(data, width, height) {
