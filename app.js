@@ -149,6 +149,8 @@ const UPSCALE_PROXY_URL = APP_CONFIG.UPSCALE_PROXY_URL || "";
 const UPSCALE_WORKFLOWS = normalizeUpscaleWorkflows(APP_CONFIG.UPSCALE_WORKFLOWS);
 const REMOVE_BG_PROXY_URL = APP_CONFIG.REMOVE_BG_PROXY_URL || "";
 const REMOVE_BG_WORKFLOWS = normalizeRemoveBgWorkflows(APP_CONFIG.REMOVE_BG_WORKFLOWS);
+const RUNNINGHUB_REMOVEBG_POLL_INTERVAL_MS = 3000;
+const RUNNINGHUB_REMOVEBG_MAX_POLLS = 120;
 const UPSCALE_PROVIDERS = {
   "canvas-resize": {
     label: "普通放大",
@@ -2459,7 +2461,7 @@ async function processItem(item, options) {
   let canvas = canvasFromBitmap(item.bitmap);
 
   if (options.mode !== "upscale") {
-    canvas = await removeBackgroundWithProvider(item.file, canvas, options);
+    canvas = await removeBackgroundWithProvider(item.file, canvas, options, item);
   }
 
   if (options.mode !== "upscale" && options.trim) canvas = trimTransparent(canvas);
@@ -2631,12 +2633,12 @@ function shouldUseRemoteMatting(options) {
   return ["pixian", "koukoutu", "runninghub"].includes(options.removeBgProvider) && options.mode !== "upscale";
 }
 
-async function removeBackgroundWithProvider(file, canvas, options) {
+async function removeBackgroundWithProvider(file, canvas, options, item = null) {
   if (options.mode === "upscale") return canvas;
   if (options.removeBgProvider === "local") return removeBackground(canvas, options);
   if (options.removeBgProvider === "pixian") return processWithPixian(file, options);
   if (options.removeBgProvider === "koukoutu") return processWithKoukoutu(file, options);
-  if (options.removeBgProvider === "runninghub") return removeBackgroundWithRunningHub(file, options);
+  if (options.removeBgProvider === "runninghub") return removeBackgroundWithRunningHub(file, options, item);
   throw new Error("未选择可用的云端抠图模型。");
 }
 
@@ -3534,7 +3536,7 @@ function getSafeScale(canvas, requestedScale) {
   return Math.max(1, Math.floor(Math.sqrt(MAX_OUTPUT_PIXELS / (canvas.width * canvas.height))));
 }
 
-async function removeBackgroundWithRunningHub(file, options) {
+async function removeBackgroundWithRunningHub(file, options, item = null) {
   const label = getRemoveBgStatusLabel(options);
   if (!REMOVE_BG_PROXY_URL) {
     console.log(`[${label}] request_skipped`, {
@@ -3561,13 +3563,19 @@ async function removeBackgroundWithRunningHub(file, options) {
   const outputBlob = await requestRunningHubRemoveBg(file, {
     label,
     workflowId: options.model,
+    onPoll: (pollCount, message) => {
+      if (!item) return;
+      const suffix = pollCount > 0 ? `... 第 ${pollCount} 次检查` : "...";
+      setCardStatus(item, `${message}${suffix}`, "is-working");
+    },
   });
   return blobToCanvas(outputBlob);
 }
 
-async function requestRunningHubRemoveBg(file, { label, workflowId }) {
+async function requestRunningHubRemoveBg(file, { label, workflowId, onPoll = null }) {
   const body = new FormData();
-  body.set("image", file, file.name || "input.png");
+  body.set("action", "create");
+  body.set("file", file, file.name || "input.png");
 
   let response;
   try {
@@ -3585,9 +3593,12 @@ async function requestRunningHubRemoveBg(file, { label, workflowId }) {
   console.log(`[${label}] worker_response`, {
     provider: "runninghub",
     workflow: workflowId,
+    action: "create",
     status: response.status,
     ok: response.ok,
   });
+
+  if (isImageResponse(response)) return response.blob();
 
   if (!response.ok) {
     const errorInfo = await readRunningHubWorkerError(response);
@@ -3598,7 +3609,101 @@ async function requestRunningHubRemoveBg(file, { label, workflowId }) {
     });
   }
 
-  return response.blob();
+  const task = await readWorkerJson(response);
+  if (!task?.ok || !task?.taskId) {
+    throw createRunningHubProviderError(task?.message || "Worker 没有返回 RunningHub taskId", {
+      stage: task?.stage || "create_task",
+      status: response.status,
+      detail: task?.detail || JSON.stringify(task),
+    });
+  }
+
+  console.log(`[${label}] create removebg task`, {
+    provider: "runninghub",
+    workflow: workflowId,
+    taskId: task.taskId,
+    status: task.status,
+  });
+  onPoll?.(0, task.message || "RMBG-2.0 高质量抠图处理中");
+
+  for (let pollCount = 1; pollCount <= RUNNINGHUB_REMOVEBG_MAX_POLLS; pollCount += 1) {
+    await delay(RUNNINGHUB_REMOVEBG_POLL_INTERVAL_MS);
+    const statusResponse = await requestRunningHubRemoveBgStatus(task.taskId);
+
+    console.log(`[${label}] removebg poll`, {
+      provider: "runninghub",
+      workflow: workflowId,
+      taskId: task.taskId,
+      pollCount,
+      status: statusResponse.headers.get("X-RemoveBG-Status") || statusResponse.status,
+    });
+
+    if (isImageResponse(statusResponse)) {
+      console.log(`[${label}] removebg done`, {
+        provider: "runninghub",
+        workflow: workflowId,
+        taskId: task.taskId,
+        pollCount,
+      });
+      return statusResponse.blob();
+    }
+
+    const data = await readWorkerJson(statusResponse);
+    if (!statusResponse.ok || data?.ok === false || data?.status === "failed") {
+      throw createRunningHubProviderError(data?.message || "RunningHub 抠图任务失败", {
+        stage: data?.stage || "poll_task",
+        status: statusResponse.status,
+        detail: data?.detail || JSON.stringify(data),
+      });
+    }
+
+    onPoll?.(pollCount, data?.message || "RMBG-2.0 高质量抠图处理中");
+  }
+
+  throw createRunningHubProviderError("RMBG-2.0 高质量抠图超时，请稍后重试。", {
+    stage: "poll_task",
+    detail: `前端轮询 ${RUNNINGHUB_REMOVEBG_MAX_POLLS} 次仍未拿到透明抠图输出。`,
+  });
+}
+
+async function requestRunningHubRemoveBgStatus(taskId) {
+  try {
+    return await fetch(REMOVE_BG_PROXY_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        action: "status",
+        taskId,
+      }),
+    });
+  } catch (error) {
+    throw createRunningHubProviderError("Worker 状态查询失败", {
+      stage: "worker_status_request",
+      detail: error?.message || String(error),
+    });
+  }
+}
+
+function isImageResponse(response) {
+  const contentType = response.headers.get("Content-Type") || "";
+  return /^image\//i.test(contentType) || response.headers.get("X-RemoveBG-Status") === "done";
+}
+
+async function readWorkerJson(response) {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    return {
+      ok: false,
+      status: "failed",
+      stage: "worker_response",
+      message: `Worker 返回非 JSON：HTTP ${response.status}`,
+      detail: text,
+    };
+  }
 }
 
 async function upscaleWithProvider(canvas, options) {
@@ -4196,6 +4301,10 @@ function dateStamp() {
 
 function nextFrame() {
   return new Promise((resolve) => requestAnimationFrame(resolve));
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function clamp(value) {

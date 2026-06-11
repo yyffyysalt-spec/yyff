@@ -2,8 +2,6 @@ const RUNNINGHUB_BASE_URL = "https://www.runninghub.ai";
 const DEFAULT_IMAGE_NODE_ID = "3";
 const DEFAULT_IMAGE_FIELD_NAME = "image";
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
-const POLL_INTERVAL_MS = 2000;
-const POLL_ATTEMPTS = 120;
 const TRANSPARENT_OUTPUT_NODE_IDS = new Set(["114", "120"]);
 const MASK_OUTPUT_NODE_IDS = new Set(["117", "118"]);
 const WHITE_OUTPUT_NODE_IDS = new Set(["119"]);
@@ -22,7 +20,7 @@ export default {
     }
 
     try {
-      return await handleRemoveBackground(request, env);
+      return await handleRemoveBackgroundRequest(request, env);
     } catch (error) {
       return errorResponse(
         error.stage || "config",
@@ -35,15 +33,38 @@ export default {
   },
 };
 
-async function handleRemoveBackground(request, env) {
+async function handleRemoveBackgroundRequest(request, env) {
   logStage("received_request", { method: request.method });
   const config = validateConfig(env);
   const { apiKey, workflowId, imageNodeId, imageFieldName, outputNodeId } = config;
-  const form = await request.formData();
-  const image = form.get("image") || form.get("file");
+  const payload = await readActionPayload(request);
+  const action = payload.action || (payload.file ? "create" : "status");
+  logStage("action", { action });
 
+  if (action === "create") {
+    return createRemoveBackgroundTask({
+      apiKey,
+      workflowId,
+      imageNodeId,
+      imageFieldName,
+      image: payload.file,
+    });
+  }
+
+  if (action === "status") {
+    return checkRemoveBackgroundTask({
+      apiKey,
+      taskId: payload.taskId,
+      outputNodeId,
+    });
+  }
+
+  throw stageError("config", "不支持的 RunningHub 抠图 action", `当前 action：${action || "(empty)"}`, 400);
+}
+
+async function createRemoveBackgroundTask({ apiKey, workflowId, imageNodeId, imageFieldName, image }) {
   if (!(image instanceof File)) {
-    throw stageError("config", "请上传需要抠图的图片", "表单字段 image 或 file 不是文件。", 400);
+    throw stageError("config", "请上传需要抠图的图片", "表单字段 file 或 image 不是文件。", 400);
   }
   if (image.size > MAX_FILE_SIZE) {
     throw stageError("config", "图片超过 5MB，请先压缩后再使用 RunningHub 抠图", `当前大小：${image.size} bytes`, 413);
@@ -57,7 +78,6 @@ async function handleRemoveBackground(request, env) {
     workflowId,
     imageNodeId,
     imageFieldName,
-    hasOutputNode: Boolean(outputNodeId),
   });
   const taskId = await createTask({
     apiKey,
@@ -68,8 +88,69 @@ async function handleRemoveBackground(request, env) {
   });
   logStage("create_task_done", { taskId });
 
-  logStage("poll_task_start", { taskId });
-  const fileUrl = await waitForOutput(apiKey, taskId, outputNodeId);
+  return jsonResponse({
+    ok: true,
+    status: "pending",
+    taskId,
+    workflowId,
+    message: "RMBG-2.0 高质量抠图任务已创建",
+  });
+}
+
+async function checkRemoveBackgroundTask({ apiKey, taskId, outputNodeId }) {
+  if (!taskId) {
+    throw stageError("config", "RunningHub 抠图 taskId 缺失", "请在 status 请求中传入 taskId。", 400);
+  }
+
+  logStage("status_check", { taskId });
+  const response = await fetch(`${RUNNINGHUB_BASE_URL}/task/openapi/outputs`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ apiKey, taskId }),
+  });
+  const data = await safeRunningHubJson(response, "poll_task");
+  if (!response.ok) {
+    throw stageError("poll_task", getRunningHubMessage(data) || "RunningHub 抠图状态查询失败", `HTTP ${response.status}：${summarizeData(data)}`, 502, data);
+  }
+  const status = getRunningHubStatus(data);
+  const selection = selectTransparentCutoutOutput(data, outputNodeId);
+  logStage("runninghub_status", {
+    taskId,
+    status,
+    candidateCount: selection.candidates.length,
+  });
+
+  if (selection.candidates.length) {
+    logStage("output_candidates", {
+      taskId,
+      candidates: selection.candidates.map(toCandidateLog),
+    });
+  }
+
+  if (selection.selected) {
+    logStage("selected_output", {
+      taskId,
+      selected: toCandidateLog(selection.selected),
+    });
+    return downloadSelectedOutput(selection.selected.fileUrl, taskId);
+  }
+
+  if (isRunningHubFailure(data)) {
+    throw stageError("poll_task", getRunningHubMessage(data) || "RunningHub 抠图任务失败", summarizeData(data), 502, data);
+  }
+
+  return jsonResponse({
+    ok: true,
+    status: "running",
+    taskId,
+    message: isRunningHubSuccess(data) ? "等待 RunningHub 输出图片" : "RMBG-2.0 高质量抠图处理中",
+  });
+}
+
+async function downloadSelectedOutput(fileUrl, taskId) {
   logStage("selected_output", { taskId, fileUrl });
 
   const output = await fetch(fileUrl);
@@ -89,8 +170,29 @@ async function handleRemoveBackground(request, env) {
       ...CORS_HEADERS,
       "Content-Type": contentType.includes("png") ? contentType : "image/png",
       "Cache-Control": "no-store",
+      "X-RemoveBG-Status": "done",
+      "X-RemoveBG-TaskId": taskId,
     },
   });
+}
+
+async function readActionPayload(request) {
+  const contentType = request.headers.get("Content-Type") || "";
+  if (/application\/json/i.test(contentType)) {
+    const data = await request.json();
+    return {
+      action: String(data?.action || "").trim(),
+      taskId: String(data?.taskId || data?.task_id || "").trim(),
+      file: null,
+    };
+  }
+
+  const form = await request.formData();
+  return {
+    action: String(form.get("action") || "").trim(),
+    taskId: String(form.get("taskId") || form.get("task_id") || "").trim(),
+    file: form.get("file") || form.get("image"),
+  };
 }
 
 function validateConfig(env) {
@@ -159,66 +261,6 @@ async function createTask({ apiKey, workflowId, imageNodeId, imageFieldName, upl
 
   if (!taskId) throw stageError("create_task", "RunningHub 创建抠图任务成功但没有返回 taskId", summarizeData(data));
   return taskId;
-}
-
-async function waitForOutput(apiKey, taskId, outputNodeId) {
-  let lastData = null;
-
-  for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt += 1) {
-    if (attempt > 0) await sleep(POLL_INTERVAL_MS);
-    const pollCount = attempt + 1;
-
-    const response = await fetch(`${RUNNINGHUB_BASE_URL}/task/openapi/outputs`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ apiKey, taskId }),
-    });
-    const data = await safeRunningHubJson(response, "poll_task");
-    lastData = data;
-    const status = getRunningHubStatus(data);
-    const selection = selectTransparentCutoutOutput(data, outputNodeId);
-
-    if (pollCount === 1 || pollCount % 10 === 0) {
-      logStage("poll_task_progress", {
-        taskId,
-        pollCount,
-        maxPolls: POLL_ATTEMPTS,
-        status,
-        candidateCount: selection.candidates.length,
-      });
-    }
-
-    if (selection.candidates.length) {
-      logStage("output_candidates", {
-        taskId,
-        pollCount,
-        candidates: selection.candidates.map(toCandidateLog),
-      });
-    }
-
-    if (selection.selected) {
-      logStage("selected_output", {
-        taskId,
-        pollCount,
-        selected: toCandidateLog(selection.selected),
-      });
-      return selection.selected.fileUrl;
-    }
-    if (isRunningHubFailure(data)) {
-      throw stageError("poll_task", getRunningHubMessage(data) || "RunningHub 抠图任务失败", summarizeData(data), 502, data);
-    }
-  }
-
-  throw stageError(
-    "poll_task",
-    "RunningHub 抠图任务超时",
-    `轮询 ${POLL_ATTEMPTS} 次仍未拿到透明抠图输出。最后状态：${getRunningHubStatus(lastData)}；最后响应：${summarizeData(lastData)}`,
-    504,
-    lastData,
-  );
 }
 
 async function readRunningHubJson(response, stage, fallbackMessage) {
@@ -431,8 +473,4 @@ function summarizeRaw(data) {
 
 function logStage(stage, detail = {}) {
   console.log("[RunningHub RemoveBG Worker]", { stage, ...detail });
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
