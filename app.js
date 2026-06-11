@@ -2831,11 +2831,12 @@ function normalizeKoukoutuProxyUrl(value) {
 
 function isExpectedProcessingError(error) {
   const message = String(error?.message || error || "");
-  return /AI 高清增强(?:服务)?未配置/.test(message);
+  return Boolean(error?.isRunningHubProviderError) || /AI 高清增强(?:服务)?未配置|UPSCALE_PROXY_URL/.test(message);
 }
 
 function getProcessingErrorText(error) {
   const message = String(error?.message || error || "处理失败").trim();
+  if (error?.isRunningHubProviderError || /RunningHub|UPSCALE_PROXY_URL|Worker/.test(message)) return message;
   if (/failed to fetch|networkerror|load failed/i.test(message) && els.modelSelect.value === "koukoutu") {
     return "抠抠图接口暂不支持网页直连，需要配置中转服务。";
   }
@@ -3389,13 +3390,38 @@ function resolveUpscaleProvider(options) {
 async function upscaleWithRunningHub(canvas, options) {
   const scale = Number(options.scale);
   const preserveAlpha = options.preserveAlpha !== false;
-  if (!UPSCALE_PROXY_URL) throw new Error("AI 高清增强服务未配置");
+  if (!UPSCALE_PROXY_URL) {
+    console.log("[AI 高清增强] request_skipped", {
+      provider: "runninghub",
+      scale,
+      hasProxyUrl: false,
+      inputWidth: canvas.width,
+      inputHeight: canvas.height,
+    });
+    throw createRunningHubProviderError("UPSCALE_PROXY_URL 为空：AI 高清增强服务未配置", {
+      stage: "config",
+      detail: "请先部署 runninghub-upscale-worker.js，并把 Worker 地址填入 app.js 的 UPSCALE_PROXY_URL。",
+    });
+  }
   if (![2, 4].includes(scale)) throw new Error("AI 高清增强仅支持 2x 或 4x");
 
   const hasAlpha = preserveAlpha && canvasHasAnyTransparency(canvas);
+  console.log("[AI 高清增强] request", {
+    provider: "runninghub",
+    scale,
+    hasProxyUrl: Boolean(UPSCALE_PROXY_URL),
+    inputWidth: canvas.width,
+    inputHeight: canvas.height,
+    transparent: hasAlpha,
+  });
   const sourceForAi = hasAlpha ? createOpaqueRgbCanvas(canvas) : canvas;
   const sourceBlob = await canvasToBlob(sourceForAi, "image/png");
-  const enhancedRgb = await requestRunningHubUpscale(sourceBlob, { scale, preserveAlpha: hasAlpha });
+  const enhancedRgb = await requestRunningHubUpscale(sourceBlob, {
+    scale,
+    preserveAlpha: hasAlpha,
+    inputWidth: canvas.width,
+    inputHeight: canvas.height,
+  });
 
   if (!hasAlpha) return enhancedRgb;
 
@@ -3404,23 +3430,80 @@ async function upscaleWithRunningHub(canvas, options) {
   return composeRgbWithAlpha(enhancedRgb, resizedAlpha);
 }
 
-async function requestRunningHubUpscale(blob, { scale, preserveAlpha }) {
+async function requestRunningHubUpscale(blob, { scale, preserveAlpha, inputWidth, inputHeight }) {
   const body = new FormData();
   body.set("image", blob, "input.png");
   body.set("scale", String(scale));
   body.set("preserveAlpha", preserveAlpha ? "1" : "0");
 
-  const response = await fetch(UPSCALE_PROXY_URL, {
-    method: "POST",
-    body,
+  let response;
+  try {
+    response = await fetch(UPSCALE_PROXY_URL, {
+      method: "POST",
+      body,
+    });
+  } catch (error) {
+    throw createRunningHubProviderError("Worker 请求失败", {
+      stage: "worker_request",
+      detail: error?.message || String(error),
+    });
+  }
+
+  console.log("[AI 高清增强] worker_response", {
+    provider: "runninghub",
+    scale,
+    inputWidth,
+    inputHeight,
+    transparent: preserveAlpha,
+    status: response.status,
+    ok: response.ok,
   });
 
   if (!response.ok) {
-    const message = await readErrorMessage(response);
-    throw new Error(message || "AI 高清增强处理失败");
+    const errorInfo = await readRunningHubWorkerError(response);
+    throw createRunningHubProviderError(errorInfo.message || "Worker 返回非 200", {
+      stage: errorInfo.stage || "worker_response",
+      status: response.status,
+      detail: errorInfo.detail,
+    });
   }
 
   return blobToCanvas(await response.blob());
+}
+
+async function readRunningHubWorkerError(response) {
+  const text = await response.text();
+  try {
+    const data = JSON.parse(text);
+    if (data && typeof data === "object") {
+      return {
+        stage: data.stage,
+        message: data.message || `Worker 返回非 200：HTTP ${response.status}`,
+        detail: data.detail || data.error || text,
+      };
+    }
+  } catch (error) {
+    // Non-JSON errors are still useful in full for debugging.
+  }
+
+  return {
+    stage: "worker_response",
+    message: `Worker 返回非 200：HTTP ${response.status}`,
+    detail: text,
+  };
+}
+
+function createRunningHubProviderError(message, { stage, status, detail } = {}) {
+  const parts = [message];
+  if (stage) parts.push(`stage=${stage}`);
+  if (status) parts.push(`status=${status}`);
+  if (detail) parts.push(`detail=${detail}`);
+  const error = new Error(parts.join(" | "));
+  error.isRunningHubProviderError = true;
+  error.stage = stage;
+  error.status = status;
+  error.detail = detail;
+  return error;
 }
 
 function canvasHasAnyTransparency(canvas) {
