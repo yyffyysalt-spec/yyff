@@ -4,11 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check app.js && node --check runninghub-upscale-worker.js && node --check runninghub-removebg-worker.js",
+    "check": "node --check app.js && node --check runninghub-upscale-worker.js && node --check runninghub-removebg-worker.js && node --check scripts/setup-removebg.js && node --check scripts/set-removebg-url.js",
+    "check:removebg": "node --check runninghub-removebg-worker.js && node scripts/setup-removebg.js",
+    "secret:removebg": "wrangler secret put RUNNINGHUB_API_KEY --config wrangler.removebg.toml",
     "deploy:worker": "wrangler deploy",
     "deploy:removebg-worker": "wrangler deploy --config wrangler.removebg.toml",
     "deploy:web": "echo \"GitHub Pages uses repository publishing source\"",
-    "deploy:all": "npm run check && npm run deploy:worker && npm run deploy:removebg-worker && npm run deploy:web"
+    "deploy:all": "npm run check && npm run deploy:worker && npm run deploy:removebg-worker && npm run deploy:web",
+    "set:removebg-url": "node scripts/set-removebg-url.js"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

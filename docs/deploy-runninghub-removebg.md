@@ -41,33 +41,45 @@ RUNNINGHUB_API_KEY
 npm run check
 ```
 
+再检查抠图 Worker 部署配置：
+
+```bash
+npm run check:removebg
+```
+
+如果检查提示 `RUNNINGHUB_REMOVEBG_WORKFLOW_ID` 为空，请先打开 `wrangler.removebg.toml`，填入真实工作流 ID。
+
+设置 RunningHub API Key。这个命令会让你在终端粘贴 API Key，密钥不会写进仓库：
+
+```bash
+npm run secret:removebg
+```
+
 部署抠图 Worker：
 
 ```bash
 npm run deploy:removebg-worker
 ```
 
-设置 RunningHub API Key：
+部署成功后，终端会输出类似：
 
-```bash
-npx wrangler secret put RUNNINGHUB_API_KEY --config wrangler.removebg.toml
+```text
+https://runninghub-removebg-worker.xxx.workers.dev
 ```
-
-如果 `wrangler.removebg.toml` 里的 `RUNNINGHUB_REMOVEBG_WORKFLOW_ID` 仍为空，请先填入真实工作流 ID 再部署。
 
 ## 配置前端
 
-部署 Worker 后，Cloudflare 会给出类似这样的地址：
+复制终端输出的 Worker 地址，自动写入 `config.js`：
 
-```text
-https://runninghub-removebg-worker.your-subdomain.workers.dev
+```bash
+npm run set:removebg-url -- "https://runninghub-removebg-worker.xxx.workers.dev"
 ```
 
-打开 `config.js`，填入公开 Worker URL：
+这会把 `config.js` 中的 `REMOVE_BG_PROXY_URL` 改成：
 
 ```js
 window.APP_CONFIG = {
-  REMOVE_BG_PROXY_URL: "https://runninghub-removebg-worker.your-subdomain.workers.dev",
+  REMOVE_BG_PROXY_URL: "https://runninghub-removebg-worker.xxx.workers.dev",
   REMOVE_BG_WORKFLOWS: [
     {
       id: "rmbg20",
@@ -81,6 +93,19 @@ window.APP_CONFIG = {
 
 注意：这里只能放公开 Worker 地址和显示名称，不能放 RunningHub API Key。
 
+## 部署后提交网页配置
+
+1. 本地打开 `index.html` 测试。
+2. 确认“抠图模型”默认选中“RMBG-2.0 高质量抠图”。
+3. 上传图片，确认 RunningHub 抠图能返回透明 PNG。
+4. 成功后提交前端配置：
+
+```bash
+git add config.js
+git commit -m "Configure RunningHub remove background worker URL"
+git push origin main
+```
+
 ## 测试
 
 1. 打开网页。
@@ -89,4 +114,3 @@ window.APP_CONFIG = {
 4. 点击“开始处理”。
 5. Worker 未配置时，任务卡片应显示“RunningHub 抠图服务未配置”。
 6. Worker 配置正确时，应返回透明 PNG，编辑、预览、下载和 ZIP 下载正常可用。
-
