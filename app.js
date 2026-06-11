@@ -125,6 +125,7 @@ const MODEL_PRESETS = {
   },
 };
 const APP_CONFIG = window.APP_CONFIG || {};
+const ONE_MB = 1024 * 1024;
 const BUILT_IN_REMOVE_BG_MODELS = [
   {
     id: "local-fast",
@@ -149,8 +150,11 @@ const UPSCALE_PROXY_URL = APP_CONFIG.UPSCALE_PROXY_URL || "";
 const UPSCALE_WORKFLOWS = normalizeUpscaleWorkflows(APP_CONFIG.UPSCALE_WORKFLOWS);
 const REMOVE_BG_PROXY_URL = APP_CONFIG.REMOVE_BG_PROXY_URL || "";
 const REMOVE_BG_WORKFLOWS = normalizeRemoveBgWorkflows(APP_CONFIG.REMOVE_BG_WORKFLOWS);
-const RUNNINGHUB_REMOVEBG_POLL_INTERVAL_MS = 3000;
-const RUNNINGHUB_REMOVEBG_MAX_POLLS = 120;
+const RUNNINGHUB_REMOVEBG_MAX_UPLOAD_SIDE = getPositiveConfigNumber("REMOVE_BG_MAX_UPLOAD_SIDE", 1600);
+const RUNNINGHUB_REMOVEBG_MAX_SOURCE_SIDE = 2000;
+const RUNNINGHUB_REMOVEBG_MAX_UPLOAD_BYTES_HINT = ONE_MB;
+const RUNNINGHUB_REMOVEBG_POLL_INTERVAL_MS = getPositiveConfigNumber("REMOVE_BG_POLL_INTERVAL_MS", 3000);
+const RUNNINGHUB_REMOVEBG_MAX_POLLS = getPositiveConfigNumber("REMOVE_BG_MAX_POLL_COUNT", 80);
 const UPSCALE_PROVIDERS = {
   "canvas-resize": {
     label: "普通放大",
@@ -2577,6 +2581,11 @@ function normalizeUpscaleWorkflows(workflows) {
     .filter(Boolean);
 }
 
+function getPositiveConfigNumber(key, fallback) {
+  const value = Number(APP_CONFIG?.[key]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 function initializeUpscaleProviderOptions() {
   els.upscaleProviderSelect.innerHTML = "";
 
@@ -2638,7 +2647,7 @@ async function removeBackgroundWithProvider(file, canvas, options, item = null) 
   if (options.removeBgProvider === "local") return removeBackground(canvas, options);
   if (options.removeBgProvider === "pixian") return processWithPixian(file, options);
   if (options.removeBgProvider === "koukoutu") return processWithKoukoutu(file, options);
-  if (options.removeBgProvider === "runninghub") return removeBackgroundWithRunningHub(file, options, item);
+  if (options.removeBgProvider === "runninghub") return removeBackgroundWithRunningHub(file, options, item, canvas);
   throw new Error("未选择可用的云端抠图模型。");
 }
 
@@ -3536,7 +3545,7 @@ function getSafeScale(canvas, requestedScale) {
   return Math.max(1, Math.floor(Math.sqrt(MAX_OUTPUT_PIXELS / (canvas.width * canvas.height))));
 }
 
-async function removeBackgroundWithRunningHub(file, options, item = null) {
+async function removeBackgroundWithRunningHub(file, options, item = null, sourceCanvas = null) {
   const label = getRemoveBgStatusLabel(options);
   if (!REMOVE_BG_PROXY_URL) {
     console.log(`[${label}] request_skipped`, {
@@ -3552,30 +3561,49 @@ async function removeBackgroundWithRunningHub(file, options, item = null) {
     });
   }
 
+  const originalCanvas = sourceCanvas || canvasFromBitmap(item?.bitmap);
+  const setStatus = (text) => {
+    if (item) setCardStatus(item, text, "is-working");
+  };
+
   console.log(`[${label}] request`, {
     provider: "runninghub",
     workflow: options.model,
     hasProxyUrl: Boolean(REMOVE_BG_PROXY_URL),
     fileSize: file.size,
     fileType: file.type || "unknown",
+    inputWidth: originalCanvas.width,
+    inputHeight: originalCanvas.height,
   });
 
-  const outputBlob = await requestRunningHubRemoveBg(file, {
+  setStatus("正在准备云端抠图图像...");
+  const uploadInput = await prepareRunningHubRemoveBgInput(file, originalCanvas);
+  if (uploadInput.wasResized) {
+    setStatus(`已缩小上传图：原图 ${originalCanvas.width}x${originalCanvas.height} → 上传 ${uploadInput.width}x${uploadInput.height}`);
+    await delay(120);
+  }
+
+  const outputBlob = await requestRunningHubRemoveBg(uploadInput.blob, {
     label,
     workflowId: options.model,
+    uploadName: uploadInput.name,
     onPoll: (pollCount, message) => {
       if (!item) return;
-      const suffix = pollCount > 0 ? `... 第 ${pollCount} 次检查` : "...";
+      const suffix = pollCount > 0 ? `，第 ${pollCount} 次检查` : "";
       setCardStatus(item, `${message}${suffix}`, "is-working");
     },
+    onStatus: setStatus,
   });
-  return blobToCanvas(outputBlob);
+
+  setStatus("正在还原到原图尺寸...");
+  const cutoutCanvas = await blobToCanvas(outputBlob);
+  return restoreRunningHubRemoveBgToOriginal(originalCanvas, cutoutCanvas);
 }
 
-async function requestRunningHubRemoveBg(file, { label, workflowId, onPoll = null }) {
+async function requestRunningHubRemoveBg(file, { label, workflowId, uploadName = "input.png", onPoll = null, onStatus = null }) {
   const body = new FormData();
   body.set("action", "create");
-  body.set("file", file, file.name || "input.png");
+  body.set("file", file, uploadName);
 
   let response;
   try {
@@ -3624,6 +3652,7 @@ async function requestRunningHubRemoveBg(file, { label, workflowId, onPoll = nul
     taskId: task.taskId,
     status: task.status,
   });
+  onStatus?.(task.message || "RMBG-2.0 高质量抠图任务已创建");
   onPoll?.(0, task.message || "RMBG-2.0 高质量抠图处理中");
 
   for (let pollCount = 1; pollCount <= RUNNINGHUB_REMOVEBG_MAX_POLLS; pollCount += 1) {
@@ -3639,6 +3668,7 @@ async function requestRunningHubRemoveBg(file, { label, workflowId, onPoll = nul
     });
 
     if (isImageResponse(statusResponse)) {
+      onStatus?.("正在下载抠图结果...");
       console.log(`[${label}] removebg done`, {
         provider: "runninghub",
         workflow: workflowId,
@@ -3657,13 +3687,43 @@ async function requestRunningHubRemoveBg(file, { label, workflowId, onPoll = nul
       });
     }
 
-    onPoll?.(pollCount, data?.message || "RMBG-2.0 高质量抠图处理中");
+    onPoll?.(pollCount, "云端仍在处理中");
   }
 
-  throw createRunningHubProviderError("RMBG-2.0 高质量抠图超时，请稍后重试。", {
+  throw createRunningHubProviderError("RMBG-2.0 高质量抠图超时，建议使用较小图片或切换本地极速", {
     stage: "poll_task",
     detail: `前端轮询 ${RUNNINGHUB_REMOVEBG_MAX_POLLS} 次仍未拿到透明抠图输出。`,
   });
+}
+
+async function prepareRunningHubRemoveBgInput(file, sourceCanvas) {
+  const sourceLongestSide = Math.max(sourceCanvas.width, sourceCanvas.height);
+  const needsResize = file.size > RUNNINGHUB_REMOVEBG_MAX_UPLOAD_BYTES_HINT || sourceLongestSide > RUNNINGHUB_REMOVEBG_MAX_SOURCE_SIDE;
+  const uploadScale = needsResize ? Math.min(1, RUNNINGHUB_REMOVEBG_MAX_UPLOAD_SIDE / sourceLongestSide) : 1;
+  const uploadCanvas =
+    uploadScale < 1
+      ? resizeCanvasTo(sourceCanvas, Math.round(sourceCanvas.width * uploadScale), Math.round(sourceCanvas.height * uploadScale))
+      : sourceCanvas;
+  const hasTransparency = canvasHasAnyTransparency(sourceCanvas);
+  const mimeType = hasTransparency ? "image/png" : "image/jpeg";
+  const blob = needsResize
+    ? await canvasToBlob(uploadCanvas, mimeType, mimeType === "image/jpeg" ? 0.92 : undefined)
+    : file;
+  const extension = mimeType === "image/jpeg" ? "jpg" : "png";
+
+  return {
+    blob,
+    name: `runninghub-rmbg-input.${needsResize ? extension : file.name?.split(".").pop() || extension}`,
+    width: uploadCanvas.width,
+    height: uploadCanvas.height,
+    wasResized: needsResize || uploadCanvas.width !== sourceCanvas.width || uploadCanvas.height !== sourceCanvas.height,
+  };
+}
+
+function restoreRunningHubRemoveBgToOriginal(originalCanvas, cutoutCanvas) {
+  const alphaMask = createAlphaCanvas(cutoutCanvas);
+  const resizedAlpha = resizeCanvasTo(alphaMask, originalCanvas.width, originalCanvas.height);
+  return composeRgbWithAlpha(originalCanvas, resizedAlpha);
 }
 
 async function requestRunningHubRemoveBgStatus(taskId) {
