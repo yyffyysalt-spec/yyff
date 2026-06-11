@@ -75,6 +75,7 @@ select {
 
 button {
   border: 0;
+  min-width: 0;
 }
 
 .app-shell {
@@ -358,13 +359,27 @@ svg {
 }
 
 select {
+  appearance: none;
   width: 100%;
   min-height: 42px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.9);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 20px) 52%,
+    calc(100% - 14px) 52%;
+  background-repeat: no-repeat;
+  background-size:
+    6px 6px,
+    6px 6px;
   color: var(--ink);
-  padding: 0 12px;
+  overflow: hidden;
+  padding: 0 40px 0 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .field input[type="text"],
@@ -487,8 +502,13 @@ input[type="range"] {
   justify-content: center;
   gap: 8px;
   min-height: 44px;
+  max-width: 100%;
+  overflow: hidden;
   border-radius: 8px;
   font-weight: 800;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   cursor: pointer;
   transition:
     transform 150ms ease,
@@ -497,6 +517,7 @@ input[type="range"] {
 }
 
 .primary-button {
+  padding: 0 18px;
   background: linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%);
   color: white;
   box-shadow: 0 16px 34px rgba(15, 122, 104, 0.24);
@@ -507,6 +528,16 @@ input[type="range"] {
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.9);
   color: var(--ink);
+}
+
+.primary-button span,
+.small-button span,
+.upload-more-button span,
+.compress-start-button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 select:focus-visible,
@@ -567,7 +598,7 @@ button:disabled {
   gap: 7px;
   width: 144px;
   min-height: 68px;
-  padding: 0 16px;
+  padding: 0 20px;
   border-color: var(--primary-border);
   border-radius: 8px;
   border: 1px solid rgba(169, 215, 203, 0.86);
@@ -1261,10 +1292,37 @@ figcaption {
   width: 100%;
   height: 132px;
   aspect-ratio: auto;
-  object-fit: contain;
+  object-fit: cover;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: rgba(248, 252, 249, 0.86);
+}
+
+.preview-thumb {
+  display: block;
+  width: 100%;
+  height: 132px;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(248, 252, 249, 0.86);
+  cursor: zoom-in;
+}
+
+.preview-thumb .original-preview {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+
+.preview-thumb:hover,
+.preview-thumb:focus-visible {
+  border-color: var(--primary-border);
+  box-shadow: var(--focus-ring);
+  outline: 0;
 }
 
 .result-canvas {
@@ -1326,6 +1384,10 @@ figcaption {
   color: #b91c1c;
 }
 
+.card-status.is-canceled {
+  color: #6b7280;
+}
+
 .card-footer {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1357,6 +1419,33 @@ figcaption {
   border-color: rgba(216, 123, 112, 0.34);
   background: rgba(255, 248, 247, 0.92);
   color: #a33d35;
+}
+
+.task-cancel-button {
+  flex: 0 0 36px;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-color: rgba(169, 215, 203, 0.76);
+  background: rgba(246, 251, 248, 0.94);
+  color: var(--primary-hover);
+}
+
+.task-cancel-button:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  box-shadow: 0 10px 24px rgba(15, 122, 104, 0.12);
+}
+
+.task-cancel-button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.task-cancel-button .label {
+  display: none;
 }
 
 .task-delete-button:hover:not(:disabled) {
@@ -1393,7 +1482,7 @@ figcaption {
 .small-button {
   flex: 0 0 auto;
   min-height: 36px;
-  padding: 0 12px;
+  padding: 0 16px;
   font-size: 13px;
 }
 
@@ -1462,6 +1551,26 @@ figcaption {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.preview-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(230, 245, 240, 0.72);
+}
+
+.preview-mode-toggle[hidden] {
+  display: none;
+}
+
+.preview-mode-toggle .small-button {
+  min-height: 32px;
+  border-color: transparent;
+  background: transparent;
 }
 
 .preview-crop-actions {
@@ -1578,6 +1687,92 @@ figcaption {
   max-width: 100%;
   max-height: calc(100vh - 170px);
   object-fit: contain;
+}
+
+.compare-view {
+  --compare-position: 50%;
+  position: relative;
+  width: 100%;
+  min-height: 420px;
+  max-height: calc(100vh - 170px);
+  overflow: hidden;
+  border-radius: inherit;
+  touch-action: none;
+}
+
+.compare-layer {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.compare-layer img {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
+}
+
+.compare-result {
+  clip-path: inset(0 0 0 var(--compare-position));
+}
+
+.compare-result.checker {
+  background:
+    linear-gradient(45deg, var(--checker-tile) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--checker-tile) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--checker-tile) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--checker-tile) 75%),
+    #ffffff;
+  background-position:
+    0 0,
+    0 10px,
+    10px -10px,
+    -10px 0;
+  background-size: 20px 20px;
+}
+
+.compare-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--compare-position);
+  width: 2px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 0 1px rgba(16, 35, 30, 0.12);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.compare-handle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 50%;
+  background: rgba(16, 35, 30, 0.42);
+  box-shadow: 0 12px 30px rgba(16, 35, 30, 0.22);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 900;
+  transform: translate(-50%, -50%);
+}
+
+.compare-slider {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: ew-resize;
+  touch-action: none;
 }
 
 .crop-overlay {

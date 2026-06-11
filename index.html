@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>批量抠图 + 高清放大</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./styles.css?v=20260611-2" />
+    <link rel="stylesheet" href="./styles.css?v=20260611-7" />
   </head>
   <body>
     <main class="app-shell">
@@ -286,7 +286,9 @@
         <div class="preview-pair">
           <figure>
             <figcaption>原图</figcaption>
-            <img class="original-preview" alt="原图预览" />
+            <button class="preview-thumb original-preview-button" type="button" title="查看原图">
+              <img class="original-preview" alt="原图预览" />
+            </button>
           </figure>
           <figure class="processed-figure checker">
             <figcaption>结果</figcaption>
@@ -300,6 +302,10 @@
             <span class="file-meta"></span>
           </div>
           <div class="card-buttons">
+            <button class="icon-button cancel-button task-cancel-button" type="button" title="取消生成" aria-label="取消生成" hidden disabled>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/><circle cx="12" cy="12" r="9"/></svg>
+              <span class="label">取消生成</span>
+            </button>
             <button class="icon-button delete-button task-delete-button" type="button" title="删除" aria-label="删除">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
               <span class="label">删除</span>
@@ -319,6 +325,10 @@
             <p id="previewMeta"></p>
           </div>
           <div class="preview-actions">
+            <span class="preview-mode-toggle" id="previewModeToggle" hidden>
+              <button class="small-button is-active" id="previewResultModeButton" type="button">结果</button>
+              <button class="small-button" id="previewCompareModeButton" type="button">前后对比</button>
+            </span>
             <span class="preview-crop-actions" id="previewCropActions" hidden>
               <button class="small-button" id="previewCropButton" type="button" hidden>裁剪大小</button>
               <button class="small-button" id="previewApplyCropButton" type="button" hidden>应用裁剪</button>
@@ -332,6 +342,18 @@
         </div>
         <div class="preview-image-wrap checker">
           <img id="previewImage" alt="放大的处理结果预览" />
+          <div class="compare-view" id="previewCompareView" hidden>
+            <div class="compare-layer compare-original">
+              <img id="compareOriginalImage" alt="原图对比预览" />
+            </div>
+            <div class="compare-layer compare-result checker" id="compareResultLayer">
+              <img id="compareResultImage" alt="抠图结果对比预览" />
+            </div>
+            <div class="compare-divider" id="compareDivider" aria-hidden="true">
+              <span class="compare-handle">↔</span>
+            </div>
+            <input id="compareSlider" class="compare-slider" type="range" min="0" max="100" value="50" aria-label="拖动查看抠图前后对比" />
+          </div>
           <div class="crop-overlay" id="previewCropOverlay" hidden>
             <span class="crop-grid" aria-hidden="true"></span>
             <button class="crop-handle crop-handle-nw" type="button" data-crop-handle="nw" aria-label="裁剪左上角"></button>
@@ -420,7 +442,7 @@
       </div>
     </dialog>
 
-    <script src="./config.js?v=20260611-6"></script>
-    <script src="./app.js?v=20260611-6"></script>
+    <script src="./config.js?v=20260611-7"></script>
+    <script src="./app.js?v=20260611-7"></script>
   </body>
 </html>

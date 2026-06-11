@@ -61,9 +61,19 @@ const els = {
   template: document.querySelector("#imageCardTemplate"),
   previewModal: document.querySelector("#previewModal"),
   previewImage: document.querySelector("#previewImage"),
+  previewCompareView: document.querySelector("#previewCompareView"),
+  compareOriginalImage: document.querySelector("#compareOriginalImage"),
+  compareResultImage: document.querySelector("#compareResultImage"),
+  compareResultLayer: document.querySelector("#compareResultLayer"),
+  compareDivider: document.querySelector("#compareDivider"),
+  compareSlider: document.querySelector("#compareSlider"),
   previewTitle: document.querySelector("#previewTitle"),
   previewMeta: document.querySelector("#previewMeta"),
   previewDownloadButton: document.querySelector("#previewDownloadButton"),
+  previewModeToggle: document.querySelector("#previewModeToggle"),
+  previewResultModeButton: document.querySelector("#previewResultModeButton"),
+  previewCompareModeButton: document.querySelector("#previewCompareModeButton"),
+  previewImageWrap: document.querySelector(".preview-image-wrap"),
   previewCropActions: document.querySelector("#previewCropActions"),
   previewCropButton: document.querySelector("#previewCropButton"),
   previewApplyCropButton: document.querySelector("#previewApplyCropButton"),
@@ -189,8 +199,10 @@ const COMPRESSION_QUALITY_PRESETS = {
 };
 const COMPRESSION_FALLBACK_MIMES = ["image/jpeg", "image/png"];
 let previewUrl = null;
+let previewOriginalUrl = null;
 let previewItem = null;
 let previewMode = "result";
+let previewViewMode = "result";
 let isPreviewCropping = false;
 let previewCropRect = null;
 let previewCropBounds = null;
@@ -250,10 +262,14 @@ els.compressDownloadButton.addEventListener("click", downloadCompressedFiles);
 els.compressPreviewCard.addEventListener("click", openCompressionPreview);
 els.compressToggleButton.addEventListener("click", toggleCompressionPanel);
 els.modelSelect.addEventListener("change", () => {
+  updateSelectTitle(els.modelSelect);
   updateApiControls();
   updateUi();
 });
-els.upscaleProviderSelect.addEventListener("change", updateUi);
+els.upscaleProviderSelect.addEventListener("change", () => {
+  updateSelectTitle(els.upscaleProviderSelect);
+  updateUi();
+});
 document.querySelectorAll('input[name="mode"]').forEach((input) => {
   input.addEventListener("change", () => {
     updateOptionVisibility();
@@ -313,8 +329,15 @@ els.downloadButton.addEventListener("click", downloadAll);
 els.clearButton.addEventListener("click", clearQueue);
 els.previewCloseButton.addEventListener("click", () => els.previewModal.close());
 els.previewDownloadButton.addEventListener("click", () => {
+  if (previewMode === "original" && previewItem?.file) {
+    downloadBlob(previewItem.file, previewItem.file.name);
+    return;
+  }
   if (previewItem?.blob) downloadBlob(previewItem.blob, previewItem.outputName);
 });
+els.previewResultModeButton.addEventListener("click", () => setPreviewViewMode("result"));
+els.previewCompareModeButton.addEventListener("click", () => setPreviewViewMode("compare"));
+els.compareSlider.addEventListener("input", updateComparePosition);
 els.previewCropButton.addEventListener("click", startPreviewCrop);
 els.previewCancelCropButton.addEventListener("click", stopPreviewCrop);
 els.previewApplyCropButton.addEventListener("click", applyPreviewCrop);
@@ -1226,19 +1249,24 @@ async function addFiles(files) {
 function createItem(file, url, bitmap) {
   const fragment = els.template.content.cloneNode(true);
   const card = fragment.querySelector(".image-card");
+  const originalButton = fragment.querySelector(".original-preview-button");
   const original = fragment.querySelector(".original-preview");
   const resultCanvas = fragment.querySelector(".result-canvas");
   const status = fragment.querySelector(".card-status");
+  const cancelButton = fragment.querySelector(".cancel-button");
   const deleteButton = fragment.querySelector(".delete-button");
   const editButton = fragment.querySelector(".edit-button");
   const downloadButton = fragment.querySelector(".download-button");
 
   original.src = url;
   original.alt = file.name;
+  originalButton.title = `查看原图：${file.name}`;
   resultCanvas.width = 1;
   resultCanvas.height = 1;
   resultCanvas.title = "处理完成后点击放大预览";
-  fragment.querySelector(".file-name").textContent = file.name;
+  const fileName = fragment.querySelector(".file-name");
+  fileName.textContent = file.name;
+  fileName.title = file.name;
   fragment.querySelector(".file-meta").textContent = `${bitmap.width} x ${bitmap.height} · ${formatBytes(file.size)}`;
   fragment.querySelector(".processed-figure").classList.toggle("checker", els.checkerToggle.checked);
 
@@ -1251,16 +1279,21 @@ function createItem(file, url, bitmap) {
     original,
     resultCanvas,
     status,
+    cancelButton,
     deleteButton,
     editButton,
     downloadButton,
     blob: null,
     editorSubjectCanvas: null,
     editorBackgroundColor: null,
+    cancelRequested: false,
+    abortController: null,
     outputName: makeOutputName(file.name),
   };
 
+  originalButton.addEventListener("click", () => openPreview(item, { mode: "original" }));
   deleteButton.addEventListener("click", () => removeQueueItem(item));
+  cancelButton.addEventListener("click", () => cancelQueueItem(item));
   downloadButton.addEventListener("click", () => {
     if (item.blob) downloadBlob(item.blob, item.outputName);
   });
@@ -1285,6 +1318,9 @@ async function processQueue() {
     item.blob = null;
     item.editorSubjectCanvas = null;
     item.editorBackgroundColor = null;
+    item.cancelRequested = false;
+    item.abortController = new AbortController();
+    setItemCancelable(item, true);
     item.deleteButton.disabled = true;
     item.editButton.disabled = true;
     item.downloadButton.disabled = true;
@@ -1296,26 +1332,50 @@ async function processQueue() {
   const options = readOptions();
   let done = 0;
   for (const item of state.items) {
+    if (item.cancelRequested) {
+      setCardStatus(item, "已取消", "is-canceled");
+      setItemCancelable(item, false);
+      item.deleteButton.disabled = false;
+      done += 1;
+      updateProgress(done, state.items.length);
+      continue;
+    }
     setCardStatus(item, getTaskWorkingStatusText(options), "is-working");
     try {
       await nextFrame();
       const outputCanvas = await processItem(item, options);
+      if (item.cancelRequested) throw createCanceledTaskError();
       copyCanvas(outputCanvas, item.resultCanvas);
       item.blob = await canvasToBlob(outputCanvas);
+      setItemCancelable(item, false);
       item.deleteButton.disabled = false;
       item.editButton.disabled = false;
       item.downloadButton.disabled = false;
       item.resultCanvas.classList.add("is-previewable");
       setCardStatus(item, getTaskDoneStatusText(options), "is-done");
     } catch (error) {
+      setItemCancelable(item, false);
+      item.abortController = null;
+      if (isCanceledTaskError(error) || item.cancelRequested) {
+        resetResultCanvas(item);
+        item.deleteButton.disabled = false;
+        item.editButton.disabled = true;
+        item.downloadButton.disabled = true;
+        setCardStatus(item, "已取消", "is-canceled");
+        done += 1;
+        updateProgress(done, state.items.length);
+        continue;
+      }
       if (isExpectedProcessingError(error)) {
         console.warn(error.message);
       } else {
         console.error(error);
       }
       resetResultCanvas(item);
+      item.deleteButton.disabled = false;
       setCardStatus(item, getTaskFailureStatusText(options, error), "is-error");
     }
+    item.abortController = null;
     done += 1;
     updateProgress(done, state.items.length);
   }
@@ -1325,20 +1385,33 @@ async function processQueue() {
 }
 
 function openPreview(item, { mode = item.resultCanvas ? "result" : "compress" } = {}) {
-  if (!item.blob) return;
+  if (mode !== "original" && !item.blob) return;
   clearPreviewModal();
   previewItem = item;
   previewMode = mode;
-  previewUrl = URL.createObjectURL(item.blob);
-  const width = item.resultCanvas?.width ?? item.width ?? 0;
-  const height = item.resultCanvas?.height ?? item.height ?? 0;
+  const isOriginalPreview = mode === "original";
   const isCompressionPreview = mode === "compress";
-  els.previewImage.src = previewUrl;
-  els.previewTitle.textContent = item.outputName;
-  els.previewMeta.textContent = isCompressionPreview
-    ? `压缩后大小：${formatBytes(item.blob.size)}`
-    : `${width} x ${height} · ${formatBytes(item.blob.size)}`;
+  const canCompare = mode === "result" && Boolean(item.url && item.blob);
+  const width = isOriginalPreview ? item.bitmap?.width || 0 : item.resultCanvas?.width ?? item.width ?? 0;
+  const height = isOriginalPreview ? item.bitmap?.height || 0 : item.resultCanvas?.height ?? item.height ?? 0;
+
+  previewUrl = isOriginalPreview ? null : URL.createObjectURL(item.blob);
+  previewOriginalUrl = item.url || null;
+  els.previewTitle.textContent = isOriginalPreview ? item.file?.name || "原图预览" : item.outputName;
+  els.previewMeta.textContent = isOriginalPreview
+    ? `${width} x ${height} · ${formatBytes(item.file?.size || 0)}`
+    : isCompressionPreview
+      ? `压缩后大小：${formatBytes(item.blob.size)}`
+      : `${width} x ${height} · ${formatBytes(item.blob.size)}`;
+  els.previewModeToggle.hidden = !canCompare;
+  els.previewImageWrap.classList.toggle("checker", !isOriginalPreview);
   setPreviewCropControls(isCompressionPreview);
+  if (canCompare) {
+    setPreviewViewMode("compare");
+  } else {
+    els.previewImage.src = isOriginalPreview ? item.url : previewUrl;
+    setPreviewViewMode("result");
+  }
   if (typeof els.previewModal.showModal === "function") {
     els.previewModal.showModal();
   } else {
@@ -1352,10 +1425,39 @@ function clearPreviewModal() {
     URL.revokeObjectURL(previewUrl);
     previewUrl = null;
   }
+  previewOriginalUrl = null;
   previewItem = null;
   previewMode = "result";
+  previewViewMode = "result";
   setPreviewCropControls(false);
   els.previewImage.removeAttribute("src");
+  els.compareOriginalImage.removeAttribute("src");
+  els.compareResultImage.removeAttribute("src");
+  els.previewCompareView.hidden = true;
+  els.previewImage.hidden = false;
+  els.previewModeToggle.hidden = true;
+}
+
+function setPreviewViewMode(mode) {
+  previewViewMode = mode;
+  const isCompare = mode === "compare" && previewMode === "result" && Boolean(previewOriginalUrl && previewUrl);
+  els.previewResultModeButton.classList.toggle("is-active", !isCompare);
+  els.previewCompareModeButton.classList.toggle("is-active", isCompare);
+  els.previewCompareView.hidden = !isCompare;
+  els.previewImage.hidden = isCompare;
+  if (isCompare) {
+    els.compareOriginalImage.src = previewOriginalUrl;
+    els.compareResultImage.src = previewUrl;
+    els.compareSlider.value = "50";
+    updateComparePosition();
+  } else {
+    els.previewImage.src = previewMode === "original" ? previewOriginalUrl : previewUrl;
+  }
+}
+
+function updateComparePosition() {
+  const value = Number(els.compareSlider.value || 50);
+  els.previewCompareView.style.setProperty("--compare-position", `${value}%`);
 }
 
 function setPreviewCropControls(canCrop) {
@@ -2537,10 +2639,12 @@ function initializeRemoveBgModelOptions() {
     const option = document.createElement("option");
     option.value = choice.id;
     option.textContent = choice.label;
+    option.title = choice.label;
     els.modelSelect.append(option);
   });
 
   els.modelSelect.value = getDefaultRemoveBgChoice().id;
+  updateSelectTitle(els.modelSelect);
 }
 
 function getRemoveBgChoices() {
@@ -2593,11 +2697,18 @@ function initializeUpscaleProviderOptions() {
     const option = document.createElement("option");
     option.value = choice.id;
     option.textContent = choice.label;
+    option.title = choice.label;
     els.upscaleProviderSelect.append(option);
   });
 
   const defaultChoice = getDefaultUpscaleChoice();
   els.upscaleProviderSelect.value = defaultChoice.id;
+  updateSelectTitle(els.upscaleProviderSelect);
+}
+
+function updateSelectTitle(select) {
+  if (!select) return;
+  select.title = select.selectedOptions?.[0]?.textContent || "";
 }
 
 function getUpscaleChoices() {
@@ -3565,6 +3676,7 @@ async function removeBackgroundWithRunningHub(file, options, item = null, source
   const setStatus = (text) => {
     if (item) setCardStatus(item, text, "is-working");
   };
+  const signal = item?.abortController?.signal;
 
   console.log(`[${label}] request`, {
     provider: "runninghub",
@@ -3576,19 +3688,23 @@ async function removeBackgroundWithRunningHub(file, options, item = null, source
     inputHeight: originalCanvas.height,
   });
 
+  if (item?.cancelRequested || signal?.aborted) throw createCanceledTaskError();
   setStatus("正在准备云端抠图图像...");
   const uploadInput = await prepareRunningHubRemoveBgInput(file, originalCanvas);
+  if (item?.cancelRequested || signal?.aborted) throw createCanceledTaskError();
   if (uploadInput.wasResized) {
     setStatus(`已缩小上传图：原图 ${originalCanvas.width}x${originalCanvas.height} → 上传 ${uploadInput.width}x${uploadInput.height}`);
-    await delay(120);
+    await delay(120, signal);
   }
 
   const outputBlob = await requestRunningHubRemoveBg(uploadInput.blob, {
     label,
     workflowId: options.model,
     uploadName: uploadInput.name,
+    signal,
     onPoll: (pollCount, message) => {
       if (!item) return;
+      if (item.cancelRequested) return;
       const suffix = pollCount > 0 ? `，第 ${pollCount} 次检查` : "";
       setCardStatus(item, `${message}${suffix}`, "is-working");
     },
@@ -3597,10 +3713,11 @@ async function removeBackgroundWithRunningHub(file, options, item = null, source
 
   setStatus("正在还原到原图尺寸...");
   const cutoutCanvas = await blobToCanvas(outputBlob);
+  if (item?.cancelRequested || signal?.aborted) throw createCanceledTaskError();
   return restoreRunningHubRemoveBgToOriginal(originalCanvas, cutoutCanvas);
 }
 
-async function requestRunningHubRemoveBg(file, { label, workflowId, uploadName = "input.png", onPoll = null, onStatus = null }) {
+async function requestRunningHubRemoveBg(file, { label, workflowId, uploadName = "input.png", signal = null, onPoll = null, onStatus = null }) {
   const body = new FormData();
   body.set("action", "create");
   body.set("file", file, uploadName);
@@ -3610,8 +3727,10 @@ async function requestRunningHubRemoveBg(file, { label, workflowId, uploadName =
     response = await fetch(REMOVE_BG_PROXY_URL, {
       method: "POST",
       body,
+      signal,
     });
   } catch (error) {
+    if (signal?.aborted || error?.name === "AbortError") throw createCanceledTaskError();
     throw createRunningHubProviderError("Worker 请求失败", {
       stage: "worker_request",
       detail: error?.message || String(error),
@@ -3656,8 +3775,8 @@ async function requestRunningHubRemoveBg(file, { label, workflowId, uploadName =
   onPoll?.(0, task.message || "RMBG-2.0 高质量抠图处理中");
 
   for (let pollCount = 1; pollCount <= RUNNINGHUB_REMOVEBG_MAX_POLLS; pollCount += 1) {
-    await delay(RUNNINGHUB_REMOVEBG_POLL_INTERVAL_MS);
-    const statusResponse = await requestRunningHubRemoveBgStatus(task.taskId);
+    await delay(RUNNINGHUB_REMOVEBG_POLL_INTERVAL_MS, signal);
+    const statusResponse = await requestRunningHubRemoveBgStatus(task.taskId, signal);
 
     console.log(`[${label}] removebg poll`, {
       provider: "runninghub",
@@ -3726,7 +3845,7 @@ function restoreRunningHubRemoveBgToOriginal(originalCanvas, cutoutCanvas) {
   return composeRgbWithAlpha(originalCanvas, resizedAlpha);
 }
 
-async function requestRunningHubRemoveBgStatus(taskId) {
+async function requestRunningHubRemoveBgStatus(taskId, signal = null) {
   try {
     return await fetch(REMOVE_BG_PROXY_URL, {
       method: "POST",
@@ -3737,8 +3856,10 @@ async function requestRunningHubRemoveBgStatus(taskId) {
         action: "status",
         taskId,
       }),
+      signal,
     });
   } catch (error) {
+    if (signal?.aborted || error?.name === "AbortError") throw createCanceledTaskError();
     throw createRunningHubProviderError("Worker 状态查询失败", {
       stage: "worker_status_request",
       detail: error?.message || String(error),
@@ -4136,6 +4257,7 @@ function updateUi() {
   const completed = state.items.filter((item) => item.blob).length;
   state.items.forEach((item) => {
     item.deleteButton.disabled = state.isProcessing;
+    setItemCancelable(item, state.isProcessing && !item.blob && !item.cancelRequested);
   });
   els.emptyState.classList.toggle("is-hidden", total > 0);
   els.mainWorkspace.classList.toggle("has-items", total > 0);
@@ -4191,8 +4313,38 @@ function removeQueueItem(item) {
   updateUi();
 }
 
+function cancelQueueItem(item) {
+  if (!state.isProcessing || !item || item.cancelRequested || item.blob) return;
+  item.cancelRequested = true;
+  item.abortController?.abort();
+  setItemCancelable(item, false);
+  item.editButton.disabled = true;
+  item.downloadButton.disabled = true;
+  resetResultCanvas(item);
+  setCardStatus(item, "已取消", "is-canceled");
+}
+
+function setItemCancelable(item, canCancel) {
+  if (!item?.cancelButton) return;
+  item.cancelButton.hidden = !canCancel;
+  item.cancelButton.disabled = !canCancel;
+}
+
+function createCanceledTaskError() {
+  const error = new Error("任务已取消");
+  error.isCanceledTask = true;
+  return error;
+}
+
+function isCanceledTaskError(error) {
+  return Boolean(error?.isCanceledTask || error?.name === "AbortError");
+}
+
 function cleanupQueueItem(item) {
   if (!item) return;
+  item.cancelRequested = true;
+  item.abortController?.abort();
+  item.abortController = null;
   if (item.url) {
     URL.revokeObjectURL(item.url);
     item.url = null;
@@ -4363,8 +4515,19 @@ function nextFrame() {
   return new Promise((resolve) => requestAnimationFrame(resolve));
 }
 
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function delay(ms, signal = null) {
+  if (signal?.aborted) return Promise.reject(createCanceledTaskError());
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    function onAbort() {
+      clearTimeout(timer);
+      reject(createCanceledTaskError());
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function clamp(value) {
