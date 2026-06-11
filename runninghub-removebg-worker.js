@@ -2,8 +2,11 @@ const RUNNINGHUB_BASE_URL = "https://www.runninghub.ai";
 const DEFAULT_IMAGE_NODE_ID = "3";
 const DEFAULT_IMAGE_FIELD_NAME = "image";
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
-const POLL_INTERVAL_MS = 2500;
-const POLL_ATTEMPTS = 40;
+const POLL_INTERVAL_MS = 2000;
+const POLL_ATTEMPTS = 120;
+const TRANSPARENT_OUTPUT_NODE_IDS = new Set(["114", "120"]);
+const MASK_OUTPUT_NODE_IDS = new Set(["117", "118"]);
+const WHITE_OUTPUT_NODE_IDS = new Set(["119"]);
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -26,6 +29,7 @@ export default {
         error.message || "RunningHub 抠图失败",
         error.detail || "",
         error.status || 500,
+        error.raw,
       );
     }
   },
@@ -66,7 +70,7 @@ async function handleRemoveBackground(request, env) {
 
   logStage("poll_task_start", { taskId });
   const fileUrl = await waitForOutput(apiKey, taskId, outputNodeId);
-  logStage("output_found", { taskId, hasFileUrl: Boolean(fileUrl) });
+  logStage("selected_output", { taskId, fileUrl });
 
   const output = await fetch(fileUrl);
   if (!output.ok) {
@@ -158,8 +162,11 @@ async function createTask({ apiKey, workflowId, imageNodeId, imageFieldName, upl
 }
 
 async function waitForOutput(apiKey, taskId, outputNodeId) {
+  let lastData = null;
+
   for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt += 1) {
     if (attempt > 0) await sleep(POLL_INTERVAL_MS);
+    const pollCount = attempt + 1;
 
     const response = await fetch(`${RUNNINGHUB_BASE_URL}/task/openapi/outputs`, {
       method: "POST",
@@ -170,18 +177,48 @@ async function waitForOutput(apiKey, taskId, outputNodeId) {
       body: JSON.stringify({ apiKey, taskId }),
     });
     const data = await safeRunningHubJson(response, "poll_task");
-    const fileUrl = extractTransparentCutoutUrl(data, outputNodeId);
+    lastData = data;
+    const status = getRunningHubStatus(data);
+    const selection = selectTransparentCutoutOutput(data, outputNodeId);
 
-    if (fileUrl) return fileUrl;
-    if (hasOutputWithoutUsableFileUrl(data)) {
-      throw stageError("fetch_output", "RunningHub 没有返回透明抠图结果", summarizeData(data), 502);
+    if (pollCount === 1 || pollCount % 10 === 0) {
+      logStage("poll_task_progress", {
+        taskId,
+        pollCount,
+        maxPolls: POLL_ATTEMPTS,
+        status,
+        candidateCount: selection.candidates.length,
+      });
+    }
+
+    if (selection.candidates.length) {
+      logStage("output_candidates", {
+        taskId,
+        pollCount,
+        candidates: selection.candidates.map(toCandidateLog),
+      });
+    }
+
+    if (selection.selected) {
+      logStage("selected_output", {
+        taskId,
+        pollCount,
+        selected: toCandidateLog(selection.selected),
+      });
+      return selection.selected.fileUrl;
     }
     if (isRunningHubFailure(data)) {
-      throw stageError("poll_task", getRunningHubMessage(data) || "RunningHub 抠图任务失败", summarizeData(data), 502);
+      throw stageError("poll_task", getRunningHubMessage(data) || "RunningHub 抠图任务失败", summarizeData(data), 502, data);
     }
   }
 
-  throw stageError("poll_task", "RunningHub 抠图任务超时", `轮询 ${POLL_ATTEMPTS} 次仍未拿到透明抠图输出。`, 504);
+  throw stageError(
+    "poll_task",
+    "RunningHub 抠图任务超时",
+    `轮询 ${POLL_ATTEMPTS} 次仍未拿到透明抠图输出。最后状态：${getRunningHubStatus(lastData)}；最后响应：${summarizeData(lastData)}`,
+    504,
+    lastData,
+  );
 }
 
 async function readRunningHubJson(response, stage, fallbackMessage) {
@@ -204,45 +241,126 @@ async function safeRunningHubJson(response, stage) {
   }
 }
 
-function extractTransparentCutoutUrl(data, outputNodeId) {
-  const outputs = Array.isArray(data?.data) ? data.data : [];
-  const candidates = outputs
-    .map((item) => {
-      const fileUrl = item?.fileUrl || item?.url || "";
-      if (!fileUrl) return null;
-      return {
-        item,
-        fileUrl,
-        score: scoreOutputCandidate(item, fileUrl, outputNodeId),
-      };
+function selectTransparentCutoutOutput(data, outputNodeId) {
+  const candidates = collectOutputCandidates(data)
+    .map((candidate) => {
+      const scoredCandidate = { ...candidate };
+      scoredCandidate.score = scoreOutputCandidate(scoredCandidate, outputNodeId);
+      return scoredCandidate;
     })
-    .filter(Boolean)
     .sort((a, b) => b.score - a.score);
+  const usable = candidates.filter((candidate) => !candidate.excluded);
 
-  return candidates.find((candidate) => candidate.score > -100)?.fileUrl || "";
+  if (usable.length === 1) return { candidates, selected: usable[0] };
+  return {
+    candidates,
+    selected: usable.find((candidate) => candidate.score >= 0) || null,
+  };
 }
 
-function scoreOutputCandidate(item, fileUrl, outputNodeId) {
+function collectOutputCandidates(data) {
+  const candidates = [];
+  const seen = new Set();
+  const root = data?.data ?? data;
+
+  function visit(value, path = "", inheritedNodeIds = []) {
+    if (!value || typeof value !== "object") return;
+
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => visit(item, `${path}[${index}]`, inheritedNodeIds));
+      return;
+    }
+
+    const nodeIds = uniqueStrings([...inheritedNodeIds, ...getOutputNodeIds(value)]);
+    const fileUrl = getOutputFileUrl(value);
+    if (fileUrl && !seen.has(fileUrl)) {
+      seen.add(fileUrl);
+      const text = `${fileUrl} ${JSON.stringify(value)}`.toLowerCase();
+      candidates.push({
+        item: value,
+        fileUrl,
+        path,
+        nodeIds,
+        isImage: isImageOutput(value, fileUrl),
+        isPng: /\.png(?:[?#]|$)/i.test(fileUrl) || /image\/png/i.test(text),
+        isMask: nodeIds.some((id) => MASK_OUTPUT_NODE_IDS.has(id)) || /mask|segmentation|matte/i.test(text),
+        isWhite: nodeIds.some((id) => WHITE_OUTPUT_NODE_IDS.has(id)) || /white|add_background.*white|background.*white|白底/i.test(text),
+      });
+    }
+
+    Object.entries(value).forEach(([key, child]) => {
+      if (key === "apiKey") return;
+      visit(child, path ? `${path}.${key}` : key, nodeIds);
+    });
+  }
+
+  visit(root);
+  return candidates;
+}
+
+function getOutputFileUrl(item) {
+  return item?.fileUrl || item?.file_url || item?.url || item?.imageUrl || item?.image_url || "";
+}
+
+function getOutputNodeIds(item) {
+  return [
+    item?.nodeId,
+    item?.node_id,
+    item?.outputNodeId,
+    item?.output_node_id,
+    item?.sourceNodeId,
+    item?.source_node_id,
+    item?.originNodeId,
+    item?.origin_node_id,
+    item?.node?.id,
+    item?.node?.nodeId,
+    item?.nodeInfo?.nodeId,
+  ]
+    .filter((value) => value !== undefined && value !== null && value !== "")
+    .map((value) => String(value));
+}
+
+function uniqueStrings(values) {
+  return [...new Set(values.map((value) => String(value)).filter(Boolean))];
+}
+
+function isImageOutput(item, fileUrl) {
+  const text = `${fileUrl} ${item?.contentType || item?.content_type || item?.mime || item?.mimeType || ""}`.toLowerCase();
+  return /^https?:\/\//i.test(fileUrl) && (/image\//i.test(text) || /\.(png|jpe?g|webp)(?:[?#]|$)/i.test(fileUrl));
+}
+
+function scoreOutputCandidate(candidate, outputNodeId) {
+  const { item, fileUrl, nodeIds } = candidate;
   const text = `${fileUrl} ${JSON.stringify(item)}`.toLowerCase();
   let score = 0;
 
-  if (/mask|segmentation|matte/i.test(text)) return -1000;
-  if (/white|add_background.*white|background.*white|白底/i.test(text)) return -1000;
-  if (outputNodeId && String(item?.nodeId || item?.node_id || item?.id || "") === String(outputNodeId)) score += 120;
-  if (/\.png(?:\?|$)/i.test(fileUrl) || /image\/png/i.test(text)) score += 30;
+  candidate.excluded = !candidate.isImage || candidate.isMask || candidate.isWhite;
+  if (candidate.excluded) return -1000;
+  if (outputNodeId && nodeIds.includes(String(outputNodeId))) score += 180;
+  if (nodeIds.some((id) => TRANSPARENT_OUTPUT_NODE_IDS.has(id))) score += 140;
+  if (/\.png(?:[?#]|$)/i.test(fileUrl) || /image\/png/i.test(text)) score += 30;
   if (/rembg|removebg|transparent|alpha|none|png/i.test(text)) score += 20;
 
   return score;
+}
+
+function toCandidateLog(candidate) {
+  return {
+    nodeIds: candidate.nodeIds,
+    fileUrl: candidate.fileUrl,
+    path: candidate.path,
+    score: candidate.score,
+    excluded: candidate.excluded,
+    isPng: candidate.isPng,
+    isMask: candidate.isMask,
+    isWhite: candidate.isWhite,
+  };
 }
 
 function isRunningHubFailure(data) {
   if (isRunningHubSuccess(data)) return false;
   const message = getRunningHubMessage(data);
   return !/running|processing|queue|pending|not.*finish|排队|运行|处理中|未完成/i.test(message);
-}
-
-function hasOutputWithoutUsableFileUrl(data) {
-  return Array.isArray(data?.data) && data.data.length > 0 && !extractTransparentCutoutUrl(data);
 }
 
 function isRunningHubSuccess(data) {
@@ -253,18 +371,32 @@ function getRunningHubMessage(data) {
   return data?.msg || data?.message || data?.error || "";
 }
 
-function stageError(stage, message, detail = "", status = 500) {
+function getRunningHubStatus(data) {
+  if (!data) return "no_response";
+  const parts = [];
+  if (data.code !== undefined) parts.push(`code=${data.code}`);
+  const status = data.status || data.state || data.taskStatus || data.task_status || data.data?.status || data.data?.state;
+  if (status) parts.push(`status=${status}`);
+  const message = getRunningHubMessage(data);
+  if (message) parts.push(`message=${message}`);
+  return parts.join(" ") || "unknown";
+}
+
+function stageError(stage, message, detail = "", status = 500, raw = undefined) {
   const error = new Error(message);
   error.stage = stage;
   error.detail = detail;
   error.status = status;
-  console.error("[RunningHub RemoveBG Worker]", { stage, message, detail });
+  error.raw = raw;
+  console.error("[RunningHub RemoveBG Worker]", { stage, message, detail, raw: summarizeRaw(raw) });
   return error;
 }
 
-function errorResponse(stage, message, detail, status = 500) {
-  console.error("[RunningHub RemoveBG Worker error_response]", { stage, message, detail, status });
-  return jsonResponse({ ok: false, stage, message, detail }, status);
+function errorResponse(stage, message, detail, status = 500, raw = undefined) {
+  console.error("[RunningHub RemoveBG Worker error_response]", { stage, message, detail, status, raw: summarizeRaw(raw) });
+  const payload = { ok: false, stage, message, detail };
+  if (raw !== undefined) payload.raw = summarizeRaw(raw);
+  return jsonResponse(payload, status);
 }
 
 function jsonResponse(payload, status = 200) {
@@ -283,6 +415,17 @@ function summarizeData(data) {
     return JSON.stringify(data).slice(0, 1200);
   } catch (error) {
     return String(data);
+  }
+}
+
+function summarizeRaw(data) {
+  if (data === undefined) return undefined;
+  try {
+    const text = JSON.stringify(data, (key, value) => (key === "apiKey" ? "[redacted]" : value));
+    if (text.length <= 2000) return JSON.parse(text);
+    return `${text.slice(0, 2000)}...`;
+  } catch (error) {
+    return String(data).slice(0, 2000);
   }
 }
 
