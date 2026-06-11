@@ -52,6 +52,12 @@ https://young-art-be70.ste611003.workers.dev
 
 部署步骤见：[docs/deploy-runninghub.md](docs/deploy-runninghub.md)。
 
+## RunningHub RMBG-2.0 高质量抠图部署
+
+`RMBG-2.0 高质量抠图` 通过独立 Cloudflare Worker 中转 RunningHub 抠图工作流，默认输出透明 PNG。
+
+部署步骤见：[docs/deploy-runninghub-removebg.md](docs/deploy-runninghub-removebg.md)。
+
 ## 推荐的生产级模型
 
 - 通用商品图、物体图：BiRefNet Lite 速度更快，BiRefNet 通用版更干净。

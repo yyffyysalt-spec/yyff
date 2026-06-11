@@ -8,4 +8,13 @@ window.APP_CONFIG = {
       default: true,
     },
   ],
+  REMOVE_BG_PROXY_URL: "",
+  REMOVE_BG_WORKFLOWS: [
+    {
+      id: "rmbg20",
+      label: "RMBG-2.0 高质量抠图",
+      provider: "runninghub",
+      default: true,
+    },
+  ],
 };

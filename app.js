@@ -125,8 +125,30 @@ const MODEL_PRESETS = {
   },
 };
 const APP_CONFIG = window.APP_CONFIG || {};
+const BUILT_IN_REMOVE_BG_MODELS = [
+  {
+    id: "local-fast",
+    label: "本地极速",
+    provider: "local",
+    default: false,
+  },
+  {
+    id: "pixian-ai",
+    label: "Pixian.ai",
+    provider: "pixian",
+    default: false,
+  },
+  {
+    id: "koukoutu",
+    label: "抠抠图",
+    provider: "koukoutu",
+    default: false,
+  },
+];
 const UPSCALE_PROXY_URL = APP_CONFIG.UPSCALE_PROXY_URL || "";
 const UPSCALE_WORKFLOWS = normalizeUpscaleWorkflows(APP_CONFIG.UPSCALE_WORKFLOWS);
+const REMOVE_BG_PROXY_URL = APP_CONFIG.REMOVE_BG_PROXY_URL || "";
+const REMOVE_BG_WORKFLOWS = normalizeRemoveBgWorkflows(APP_CONFIG.REMOVE_BG_WORKFLOWS);
 const UPSCALE_PROVIDERS = {
   "canvas-resize": {
     label: "普通放大",
@@ -195,6 +217,7 @@ let isCompressionPanelExpanded = false;
 let gifDecoderModulePromise = null;
 let gifEncoderModulePromise = null;
 
+initializeRemoveBgModelOptions();
 initializeUpscaleProviderOptions();
 
 els.toleranceRange.addEventListener("input", () => {
@@ -2433,12 +2456,10 @@ function hideEraserBrushPreview() {
 }
 
 async function processItem(item, options) {
-  let canvas = shouldUseRemoteMatting(options)
-    ? await processWithRemoteMatting(item.file, options)
-    : canvasFromBitmap(item.bitmap);
+  let canvas = canvasFromBitmap(item.bitmap);
 
-  if (options.mode !== "upscale" && !shouldUseRemoteMatting(options)) {
-    canvas = removeBackground(canvas, options);
+  if (options.mode !== "upscale") {
+    canvas = await removeBackgroundWithProvider(item.file, canvas, options);
   }
 
   if (options.mode !== "upscale" && options.trim) canvas = trimTransparent(canvas);
@@ -2452,7 +2473,8 @@ async function processItem(item, options) {
 }
 
 function readOptions() {
-  const model = els.modelSelect.value;
+  const removeBgChoice = getSelectedRemoveBgChoice();
+  const model = removeBgChoice.id;
   const preset = MODEL_PRESETS[model] ?? MODEL_PRESETS["local-fast"];
   const mode = getSelectedMode();
   const upscaleChoice = getSelectedUpscaleChoice();
@@ -2460,6 +2482,9 @@ function readOptions() {
   return {
     mode,
     model,
+    removeBgProvider: removeBgChoice.provider,
+    removeBgChoice,
+    removeBgLabel: removeBgChoice.label,
     matting: preset.matting,
     scale: Number(els.scaleSelect.value),
     upscaleProvider: upscaleChoice.id,
@@ -2476,6 +2501,57 @@ function readOptions() {
     koukoutuProxyUrl: KOUKOUTU_PROXY_URL,
     koukoutuApiKey: els.koukoutuApiKeyInput.value.trim(),
   };
+}
+
+function normalizeRemoveBgWorkflows(workflows) {
+  if (!Array.isArray(workflows)) return [];
+
+  const seen = new Set(BUILT_IN_REMOVE_BG_MODELS.map((model) => model.id));
+  return workflows
+    .map((workflow) => {
+      const id = String(workflow?.id || "").trim();
+      const label = String(workflow?.label || "").trim();
+      const provider = String(workflow?.provider || "runninghub").trim();
+      if (!id || !label || !["runninghub"].includes(provider) || seen.has(id)) return null;
+      seen.add(id);
+      return {
+        id,
+        label,
+        provider,
+        default: workflow?.default === true,
+      };
+    })
+    .filter(Boolean);
+}
+
+function initializeRemoveBgModelOptions() {
+  els.modelSelect.innerHTML = "";
+
+  getRemoveBgChoices().forEach((choice) => {
+    const option = document.createElement("option");
+    option.value = choice.id;
+    option.textContent = choice.label;
+    els.modelSelect.append(option);
+  });
+
+  els.modelSelect.value = getDefaultRemoveBgChoice().id;
+}
+
+function getRemoveBgChoices() {
+  return [...REMOVE_BG_WORKFLOWS, ...BUILT_IN_REMOVE_BG_MODELS];
+}
+
+function getDefaultRemoveBgChoice() {
+  return REMOVE_BG_WORKFLOWS.find((workflow) => workflow.default) || getRemoveBgChoice("local-fast");
+}
+
+function getSelectedRemoveBgChoice() {
+  return getRemoveBgChoice(els.modelSelect.value);
+}
+
+function getRemoveBgChoice(value) {
+  const requested = String(value || "").trim();
+  return getRemoveBgChoices().find((choice) => choice.id === requested) || getRemoveBgChoice("local-fast");
 }
 
 function normalizeUpscaleWorkflows(workflows) {
@@ -2552,21 +2628,24 @@ function getUpscaleChoice(value) {
 }
 
 function shouldUseRemoteMatting(options) {
-  return shouldUsePixian(options) || shouldUseKoukoutu(options);
+  return ["pixian", "koukoutu", "runninghub"].includes(options.removeBgProvider) && options.mode !== "upscale";
 }
 
-function processWithRemoteMatting(file, options) {
-  if (shouldUsePixian(options)) return processWithPixian(file, options);
-  if (shouldUseKoukoutu(options)) return processWithKoukoutu(file, options);
+async function removeBackgroundWithProvider(file, canvas, options) {
+  if (options.mode === "upscale") return canvas;
+  if (options.removeBgProvider === "local") return removeBackground(canvas, options);
+  if (options.removeBgProvider === "pixian") return processWithPixian(file, options);
+  if (options.removeBgProvider === "koukoutu") return processWithKoukoutu(file, options);
+  if (options.removeBgProvider === "runninghub") return removeBackgroundWithRunningHub(file, options);
   throw new Error("未选择可用的云端抠图模型。");
 }
 
 function shouldUsePixian(options) {
-  return options.model === "pixian-ai" && options.mode !== "upscale";
+  return options.removeBgProvider === "pixian" && options.mode !== "upscale";
 }
 
 function shouldUseKoukoutu(options) {
-  return options.model === "koukoutu" && options.mode !== "upscale";
+  return options.removeBgProvider === "koukoutu" && options.mode !== "upscale";
 }
 
 function updateApiControls() {
@@ -2575,7 +2654,7 @@ function updateApiControls() {
 }
 
 function updatePixianControls() {
-  const isPixian = els.modelSelect.value === "pixian-ai" && getSelectedMode() !== "upscale";
+  const isPixian = getSelectedRemoveBgChoice().provider === "pixian" && getSelectedMode() !== "upscale";
   els.pixianPanel.hidden = !isPixian;
   els.pixianApiIdInput.disabled = !isPixian;
   els.pixianApiSecretInput.disabled = !isPixian;
@@ -2584,7 +2663,7 @@ function updatePixianControls() {
 }
 
 function updateKoukoutuControls() {
-  const isKoukoutu = els.modelSelect.value === "koukoutu" && getSelectedMode() !== "upscale";
+  const isKoukoutu = getSelectedRemoveBgChoice().provider === "koukoutu" && getSelectedMode() !== "upscale";
   els.koukoutuPanel.hidden = !isKoukoutu;
   els.koukoutuApiKeyInput.disabled = !isKoukoutu;
   els.koukoutuCheckCreditsButton.disabled = !isKoukoutu || !hasKoukoutuCredentials();
@@ -2617,11 +2696,11 @@ function getSelectedMode() {
 }
 
 function needsPixianCredentials() {
-  return els.modelSelect.value === "pixian-ai" && getSelectedMode() !== "upscale";
+  return getSelectedRemoveBgChoice().provider === "pixian" && getSelectedMode() !== "upscale";
 }
 
 function needsKoukoutuCredentials() {
-  return els.modelSelect.value === "koukoutu" && getSelectedMode() !== "upscale";
+  return getSelectedRemoveBgChoice().provider === "koukoutu" && getSelectedMode() !== "upscale";
 }
 
 function hasPixianCredentials() {
@@ -3455,6 +3534,73 @@ function getSafeScale(canvas, requestedScale) {
   return Math.max(1, Math.floor(Math.sqrt(MAX_OUTPUT_PIXELS / (canvas.width * canvas.height))));
 }
 
+async function removeBackgroundWithRunningHub(file, options) {
+  const label = getRemoveBgStatusLabel(options);
+  if (!REMOVE_BG_PROXY_URL) {
+    console.log(`[${label}] request_skipped`, {
+      provider: "runninghub",
+      workflow: options.model,
+      hasProxyUrl: false,
+      fileSize: file.size,
+      fileType: file.type || "unknown",
+    });
+    throw createRunningHubProviderError("RunningHub 抠图服务未配置", {
+      stage: "config",
+      detail: "请先部署 runninghub-removebg-worker.js，并把 Worker 地址填入 config.js 的 REMOVE_BG_PROXY_URL。",
+    });
+  }
+
+  console.log(`[${label}] request`, {
+    provider: "runninghub",
+    workflow: options.model,
+    hasProxyUrl: Boolean(REMOVE_BG_PROXY_URL),
+    fileSize: file.size,
+    fileType: file.type || "unknown",
+  });
+
+  const outputBlob = await requestRunningHubRemoveBg(file, {
+    label,
+    workflowId: options.model,
+  });
+  return blobToCanvas(outputBlob);
+}
+
+async function requestRunningHubRemoveBg(file, { label, workflowId }) {
+  const body = new FormData();
+  body.set("image", file, file.name || "input.png");
+
+  let response;
+  try {
+    response = await fetch(REMOVE_BG_PROXY_URL, {
+      method: "POST",
+      body,
+    });
+  } catch (error) {
+    throw createRunningHubProviderError("Worker 请求失败", {
+      stage: "worker_request",
+      detail: error?.message || String(error),
+    });
+  }
+
+  console.log(`[${label}] worker_response`, {
+    provider: "runninghub",
+    workflow: workflowId,
+    status: response.status,
+    ok: response.ok,
+  });
+
+  if (!response.ok) {
+    const errorInfo = await readRunningHubWorkerError(response);
+    throw createRunningHubProviderError(errorInfo.message || "Worker 返回非 200", {
+      stage: errorInfo.stage || "worker_response",
+      status: response.status,
+      detail: errorInfo.detail,
+    });
+  }
+
+  return response.blob();
+}
+
 async function upscaleWithProvider(canvas, options) {
   const upscaleChoice = options.upscaleChoice || getUpscaleChoice(options.upscaleProvider);
   const providerKey = resolveUpscaleProvider({ ...options, upscaleChoice });
@@ -3778,23 +3924,34 @@ function setCardStatus(item, text, className) {
 }
 
 function getTaskWorkingStatusText(options) {
+  if (usesNamedRunningHubRemoveBg(options)) return `${getRemoveBgStatusLabel(options)}处理中...`;
   if (usesNamedRunningHubUpscale(options)) return `${getUpscaleStatusLabel(options)}处理中...`;
   return "处理中";
 }
 
 function getTaskDoneStatusText(options) {
+  if (usesNamedRunningHubRemoveBg(options)) return `${getRemoveBgStatusLabel(options)}完成`;
   if (usesNamedRunningHubUpscale(options)) return `${getUpscaleStatusLabel(options)}完成`;
   return "已完成";
 }
 
 function getTaskFailureStatusText(options, error) {
   const errorText = getProcessingErrorText(error);
+  if (usesNamedRunningHubRemoveBg(options)) return `${getRemoveBgStatusLabel(options)}失败：${errorText}`;
   if (usesNamedRunningHubUpscale(options)) return `${getUpscaleStatusLabel(options)}失败：${errorText}`;
   return errorText;
 }
 
+function usesNamedRunningHubRemoveBg(options) {
+  return options.mode !== "upscale" && options.removeBgProvider === "runninghub";
+}
+
 function usesNamedRunningHubUpscale(options) {
   return options.mode !== "cutout" && resolveUpscaleProvider(options) === "runninghub";
+}
+
+function getRemoveBgStatusLabel(options) {
+  return options.removeBgLabel || options.removeBgChoice?.label || getRemoveBgChoice(options.model).label;
 }
 
 function getUpscaleStatusLabel(options) {
@@ -3821,10 +3978,11 @@ function updateUi() {
   const missingKoukoutuCredentials = total > 0 && needsKoukoutuCredentials() && !hasKoukoutuCredentials();
   const missingApiCredentials = missingPixianCredentials || missingKoukoutuCredentials;
   els.processButton.disabled = total === 0 || state.isProcessing || missingApiCredentials;
+  const removeBgProvider = getSelectedRemoveBgChoice().provider;
   els.pixianCheckCreditsButton.disabled =
-    els.modelSelect.value !== "pixian-ai" || state.isProcessing || !hasPixianCredentials();
+    removeBgProvider !== "pixian" || state.isProcessing || !hasPixianCredentials();
   els.koukoutuCheckCreditsButton.disabled =
-    els.modelSelect.value !== "koukoutu" || state.isProcessing || !hasKoukoutuCredentials();
+    removeBgProvider !== "koukoutu" || state.isProcessing || !hasKoukoutuCredentials();
   els.downloadButton.disabled = completed === 0 || state.isProcessing;
   els.clearButton.disabled = total === 0 || state.isProcessing;
   els.uploadMoreButton.disabled = state.isProcessing;

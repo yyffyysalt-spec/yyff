@@ -4,10 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check app.js && node --check runninghub-upscale-worker.js",
+    "check": "node --check app.js && node --check runninghub-upscale-worker.js && node --check runninghub-removebg-worker.js",
     "deploy:worker": "wrangler deploy",
+    "deploy:removebg-worker": "wrangler deploy --config wrangler.removebg.toml",
     "deploy:web": "echo \"GitHub Pages uses repository publishing source\"",
-    "deploy:all": "npm run check && npm run deploy:worker && npm run deploy:web"
+    "deploy:all": "npm run check && npm run deploy:worker && npm run deploy:removebg-worker && npm run deploy:web"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
