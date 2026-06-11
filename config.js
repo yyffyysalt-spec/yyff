@@ -8,7 +8,7 @@ window.APP_CONFIG = {
       default: true,
     },
   ],
-  REMOVE_BG_PROXY_URL: "",
+  REMOVE_BG_PROXY_URL: "https://runninghub-removebg-worker.ste611003.workers.dev",
   REMOVE_BG_WORKFLOWS: [
     {
       id: "rmbg20",
