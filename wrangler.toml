@@ -1,0 +1,8 @@
+name = "runninghub-upscale-worker"
+main = "runninghub-upscale-worker.js"
+compatibility_date = "2026-06-11"
+
+[vars]
+RUNNINGHUB_WORKFLOW_ID = "1962513607676309506"
+RUNNINGHUB_IMAGE_NODE_ID = "1076"
+RUNNINGHUB_IMAGE_FIELD_NAME = "image"

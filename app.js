@@ -125,7 +125,7 @@ const MODEL_PRESETS = {
   },
 };
 const UPSCALE_PROVIDER = "runninghub";
-const UPSCALE_PROXY_URL = "";
+const UPSCALE_PROXY_URL = window.APP_CONFIG?.UPSCALE_PROXY_URL || "";
 const UPSCALE_PROVIDERS = {
   "canvas-resize": {
     label: "普通放大",
@@ -1253,7 +1253,7 @@ async function processQueue() {
     item.deleteButton.disabled = true;
     item.editButton.disabled = true;
     item.downloadButton.disabled = true;
-    item.resultCanvas.classList.remove("is-previewable");
+    resetResultCanvas(item);
     setCardStatus(item, "等待处理", "");
   }
   updateUi();
@@ -1278,6 +1278,7 @@ async function processQueue() {
       } else {
         console.error(error);
       }
+      resetResultCanvas(item);
       setCardStatus(item, getProcessingErrorText(error), "is-error");
     }
     done += 1;
@@ -3400,7 +3401,7 @@ async function upscaleWithRunningHub(canvas, options) {
     });
     throw createRunningHubProviderError("UPSCALE_PROXY_URL 为空：AI 高清增强服务未配置", {
       stage: "config",
-      detail: "请先部署 runninghub-upscale-worker.js，并把 Worker 地址填入 app.js 的 UPSCALE_PROXY_URL。",
+      detail: "请先部署 runninghub-upscale-worker.js，并把 Worker 地址填入 config.js 的 UPSCALE_PROXY_URL。",
     });
   }
   if (![2, 4].includes(scale)) throw new Error("AI 高清增强仅支持 2x 或 4x");
@@ -3684,6 +3685,14 @@ function setCardStatus(item, text, className) {
   item.status.className = `card-status ${className}`;
   item.status.textContent = text;
   item.status.title = text;
+}
+
+function resetResultCanvas(item) {
+  item.resultCanvas.classList.remove("is-previewable");
+  item.resultCanvas.width = 1;
+  item.resultCanvas.height = 1;
+  const ctx = item.resultCanvas.getContext("2d");
+  ctx.clearRect(0, 0, item.resultCanvas.width, item.resultCanvas.height);
 }
 
 function updateUi() {

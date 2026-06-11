@@ -1,0 +1,15 @@
+{
+  "name": "image-batch-studio",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check app.js && node --check runninghub-upscale-worker.js",
+    "deploy:worker": "wrangler deploy",
+    "deploy:web": "echo \"GitHub Pages uses repository publishing source\"",
+    "deploy:all": "npm run check && npm run deploy:worker && npm run deploy:web"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

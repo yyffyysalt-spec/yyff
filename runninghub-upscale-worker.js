@@ -56,7 +56,7 @@ async function handleUpscale(request, env) {
     workflowId,
     imageNodeId,
     imageFieldName,
-    hasScaleNode: Boolean(env.RUNNINGHUB_SCALE_NODE_ID && env.RUNNINGHUB_SCALE_FIELD_NAME),
+    hasResolutionNode: Boolean(getResolutionNodeConfig(env)),
   });
   const taskId = await createTask({
     apiKey,
@@ -145,10 +145,11 @@ async function createTask({ apiKey, workflowId, imageNodeId, imageFieldName, upl
     },
   ];
 
-  if (env.RUNNINGHUB_SCALE_NODE_ID && env.RUNNINGHUB_SCALE_FIELD_NAME) {
+  const resolutionNode = getResolutionNodeConfig(env);
+  if (resolutionNode) {
     nodeInfoList.push({
-      nodeId: String(env.RUNNINGHUB_SCALE_NODE_ID),
-      fieldName: env.RUNNINGHUB_SCALE_FIELD_NAME,
+      nodeId: String(resolutionNode.nodeId),
+      fieldName: resolutionNode.fieldName,
       fieldValue: String(scale),
     });
   }
@@ -234,6 +235,13 @@ function isRunningHubFailure(data) {
 
 function hasOutputWithoutFileUrl(data) {
   return Array.isArray(data?.data) && data.data.length > 0 && !extractFileUrl(data);
+}
+
+function getResolutionNodeConfig(env) {
+  const nodeId = env.RUNNINGHUB_RESOLUTION_NODE_ID || env.RUNNINGHUB_SCALE_NODE_ID;
+  const fieldName = env.RUNNINGHUB_RESOLUTION_FIELD_NAME || env.RUNNINGHUB_SCALE_FIELD_NAME;
+  if (!nodeId || !fieldName) return null;
+  return { nodeId, fieldName };
 }
 
 function isRunningHubSuccess(data) {

@@ -46,6 +46,12 @@ https://young-art-be70.ste611003.workers.dev
 
 在网页选择 `抠抠图` 后，只需要填入抠抠图 API Key，即可检查积分和处理图片。后续如果要更换 Worker 地址，修改 `app.js` 里的 `KOUKOUTU_PROXY_URL` 即可。
 
+## RunningHub AI 高清增强部署
+
+`AI 高清增强（实验）` 通过 Cloudflare Worker 中转 RunningHub 工作流，避免把 RunningHub API Key 暴露在前端。
+
+部署步骤见：[docs/deploy-runninghub.md](docs/deploy-runninghub.md)。
+
 ## 推荐的生产级模型
 
 - 通用商品图、物体图：BiRefNet Lite 速度更快，BiRefNet 通用版更干净。
