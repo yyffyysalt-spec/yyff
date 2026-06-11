@@ -124,11 +124,13 @@ const MODEL_PRESETS = {
     toleranceScale: 1,
   },
 };
-const UPSCALE_PROVIDER = "runninghub";
-const UPSCALE_PROXY_URL = window.APP_CONFIG?.UPSCALE_PROXY_URL || "";
+const APP_CONFIG = window.APP_CONFIG || {};
+const UPSCALE_PROXY_URL = APP_CONFIG.UPSCALE_PROXY_URL || "";
+const UPSCALE_WORKFLOWS = normalizeUpscaleWorkflows(APP_CONFIG.UPSCALE_WORKFLOWS);
 const UPSCALE_PROVIDERS = {
   "canvas-resize": {
     label: "普通放大",
+    provider: "resize",
     async process(canvas, options) {
       const safeScale = getSafeScale(canvas, options.scale);
       const output = upscaleCanvas(canvas, safeScale);
@@ -136,8 +138,9 @@ const UPSCALE_PROVIDERS = {
       return output;
     },
   },
-  "ai-enhance": {
-    label: "AI 高清增强（实验）",
+  runninghub: {
+    label: "RunningHub 高清放大",
+    provider: "runninghub",
     async process(canvas, options) {
       return upscaleWithRunningHub(canvas, options);
     },
@@ -192,6 +195,8 @@ let isCompressionPanelExpanded = false;
 let gifDecoderModulePromise = null;
 let gifEncoderModulePromise = null;
 
+initializeUpscaleProviderOptions();
+
 els.toleranceRange.addEventListener("input", () => {
   els.toleranceOutput.value = els.toleranceRange.value;
 });
@@ -219,6 +224,7 @@ els.modelSelect.addEventListener("change", () => {
   updateApiControls();
   updateUi();
 });
+els.upscaleProviderSelect.addEventListener("change", updateUi);
 document.querySelectorAll('input[name="mode"]').forEach((input) => {
   input.addEventListener("change", () => {
     updateOptionVisibility();
@@ -1261,7 +1267,7 @@ async function processQueue() {
   const options = readOptions();
   let done = 0;
   for (const item of state.items) {
-    setCardStatus(item, "处理中", "is-working");
+    setCardStatus(item, getTaskWorkingStatusText(options), "is-working");
     try {
       await nextFrame();
       const outputCanvas = await processItem(item, options);
@@ -1271,7 +1277,7 @@ async function processQueue() {
       item.editButton.disabled = false;
       item.downloadButton.disabled = false;
       item.resultCanvas.classList.add("is-previewable");
-      setCardStatus(item, "已完成", "is-done");
+      setCardStatus(item, getTaskDoneStatusText(options), "is-done");
     } catch (error) {
       if (isExpectedProcessingError(error)) {
         console.warn(error.message);
@@ -1279,7 +1285,7 @@ async function processQueue() {
         console.error(error);
       }
       resetResultCanvas(item);
-      setCardStatus(item, getProcessingErrorText(error), "is-error");
+      setCardStatus(item, getTaskFailureStatusText(options, error), "is-error");
     }
     done += 1;
     updateProgress(done, state.items.length);
@@ -2449,13 +2455,16 @@ function readOptions() {
   const model = els.modelSelect.value;
   const preset = MODEL_PRESETS[model] ?? MODEL_PRESETS["local-fast"];
   const mode = getSelectedMode();
+  const upscaleChoice = getSelectedUpscaleChoice();
 
   return {
     mode,
     model,
     matting: preset.matting,
     scale: Number(els.scaleSelect.value),
-    upscaleProvider: els.upscaleProviderSelect.value,
+    upscaleProvider: upscaleChoice.id,
+    upscaleChoice,
+    upscaleLabel: upscaleChoice.label,
     tolerance: Number(els.toleranceRange.value) * preset.toleranceScale,
     feather: DEFAULT_EDGE_FEATHER,
     shrink: DEFAULT_EDGE_SHRINK,
@@ -2467,6 +2476,79 @@ function readOptions() {
     koukoutuProxyUrl: KOUKOUTU_PROXY_URL,
     koukoutuApiKey: els.koukoutuApiKeyInput.value.trim(),
   };
+}
+
+function normalizeUpscaleWorkflows(workflows) {
+  if (!Array.isArray(workflows)) return [];
+
+  const seen = new Set(["canvas-resize"]);
+  return workflows
+    .map((workflow) => {
+      const id = String(workflow?.id || "").trim();
+      const label = String(workflow?.label || "").trim();
+      const provider = String(workflow?.provider || "runninghub").trim();
+      if (!id || !label || !["runninghub"].includes(provider) || seen.has(id)) return null;
+      seen.add(id);
+      return {
+        id,
+        label,
+        provider,
+        default: workflow?.default === true,
+      };
+    })
+    .filter(Boolean);
+}
+
+function initializeUpscaleProviderOptions() {
+  els.upscaleProviderSelect.innerHTML = "";
+
+  getUpscaleChoices().forEach((choice) => {
+    const option = document.createElement("option");
+    option.value = choice.id;
+    option.textContent = choice.label;
+    els.upscaleProviderSelect.append(option);
+  });
+
+  const defaultChoice = getDefaultUpscaleChoice();
+  els.upscaleProviderSelect.value = defaultChoice.id;
+}
+
+function getUpscaleChoices() {
+  return [getResizeUpscaleChoice(), ...UPSCALE_WORKFLOWS];
+}
+
+function getResizeUpscaleChoice() {
+  return {
+    id: "canvas-resize",
+    label: UPSCALE_PROVIDERS["canvas-resize"].label,
+    provider: "resize",
+    default: false,
+  };
+}
+
+function getDefaultUpscaleChoice() {
+  return UPSCALE_WORKFLOWS.find((workflow) => workflow.default) || getResizeUpscaleChoice();
+}
+
+function getSelectedUpscaleChoice() {
+  return getUpscaleChoice(els.upscaleProviderSelect.value);
+}
+
+function getUpscaleChoice(value) {
+  const requested = String(value || "").trim();
+  const configuredChoice = getUpscaleChoices().find((choice) => choice.id === requested);
+  if (configuredChoice) return configuredChoice;
+
+  if (requested === "runninghub" || requested === "ai-enhance") {
+    return UPSCALE_WORKFLOWS[0] || {
+      id: "runninghub",
+      label: UPSCALE_PROVIDERS.runninghub.label,
+      provider: "runninghub",
+      default: false,
+    };
+  }
+
+  return getResizeUpscaleChoice();
 }
 
 function shouldUseRemoteMatting(options) {
@@ -3374,26 +3456,30 @@ function getSafeScale(canvas, requestedScale) {
 }
 
 async function upscaleWithProvider(canvas, options) {
-  const providerKey = resolveUpscaleProvider(options);
-  const provider =
-    providerKey === "runninghub"
-      ? UPSCALE_PROVIDERS["ai-enhance"]
-      : UPSCALE_PROVIDERS["canvas-resize"];
-  return provider.process(canvas, options);
+  const upscaleChoice = options.upscaleChoice || getUpscaleChoice(options.upscaleProvider);
+  const providerKey = resolveUpscaleProvider({ ...options, upscaleChoice });
+  const provider = providerKey === "runninghub" ? UPSCALE_PROVIDERS.runninghub : UPSCALE_PROVIDERS["canvas-resize"];
+  return provider.process(canvas, {
+    ...options,
+    upscaleChoice,
+    upscaleLabel: upscaleChoice.label,
+  });
 }
 
 function resolveUpscaleProvider(options) {
   const requested = options.provider || options.upscaleProvider;
-  if (requested === "runninghub" || requested === "ai-enhance") return UPSCALE_PROVIDER;
-  return "resize";
+  const choice = options.upscaleChoice || getUpscaleChoice(requested);
+  return choice.provider === "runninghub" ? "runninghub" : "resize";
 }
 
 async function upscaleWithRunningHub(canvas, options) {
   const scale = Number(options.scale);
   const preserveAlpha = options.preserveAlpha !== false;
+  const upscaleLabel = getUpscaleStatusLabel(options);
   if (!UPSCALE_PROXY_URL) {
-    console.log("[AI 高清增强] request_skipped", {
+    console.log(`[${upscaleLabel}] request_skipped`, {
       provider: "runninghub",
+      workflow: options.upscaleProvider,
       scale,
       hasProxyUrl: false,
       inputWidth: canvas.width,
@@ -3404,11 +3490,12 @@ async function upscaleWithRunningHub(canvas, options) {
       detail: "请先部署 runninghub-upscale-worker.js，并把 Worker 地址填入 config.js 的 UPSCALE_PROXY_URL。",
     });
   }
-  if (![2, 4].includes(scale)) throw new Error("AI 高清增强仅支持 2x 或 4x");
+  if (![2, 4].includes(scale)) throw new Error(`${upscaleLabel}仅支持 2x 或 4x`);
 
   const hasAlpha = preserveAlpha && canvasHasAnyTransparency(canvas);
-  console.log("[AI 高清增强] request", {
+  console.log(`[${upscaleLabel}] request`, {
     provider: "runninghub",
+    workflow: options.upscaleProvider,
     scale,
     hasProxyUrl: Boolean(UPSCALE_PROXY_URL),
     inputWidth: canvas.width,
@@ -3422,6 +3509,8 @@ async function upscaleWithRunningHub(canvas, options) {
     preserveAlpha: hasAlpha,
     inputWidth: canvas.width,
     inputHeight: canvas.height,
+    upscaleLabel,
+    workflowId: options.upscaleProvider,
   });
 
   if (!hasAlpha) return enhancedRgb;
@@ -3431,7 +3520,7 @@ async function upscaleWithRunningHub(canvas, options) {
   return composeRgbWithAlpha(enhancedRgb, resizedAlpha);
 }
 
-async function requestRunningHubUpscale(blob, { scale, preserveAlpha, inputWidth, inputHeight }) {
+async function requestRunningHubUpscale(blob, { scale, preserveAlpha, inputWidth, inputHeight, upscaleLabel, workflowId }) {
   const body = new FormData();
   body.set("image", blob, "input.png");
   body.set("scale", String(scale));
@@ -3450,8 +3539,9 @@ async function requestRunningHubUpscale(blob, { scale, preserveAlpha, inputWidth
     });
   }
 
-  console.log("[AI 高清增强] worker_response", {
+  console.log(`[${upscaleLabel}] worker_response`, {
     provider: "runninghub",
+    workflow: workflowId,
     scale,
     inputWidth,
     inputHeight,
@@ -3685,6 +3775,30 @@ function setCardStatus(item, text, className) {
   item.status.className = `card-status ${className}`;
   item.status.textContent = text;
   item.status.title = text;
+}
+
+function getTaskWorkingStatusText(options) {
+  if (usesNamedRunningHubUpscale(options)) return `${getUpscaleStatusLabel(options)}处理中...`;
+  return "处理中";
+}
+
+function getTaskDoneStatusText(options) {
+  if (usesNamedRunningHubUpscale(options)) return `${getUpscaleStatusLabel(options)}完成`;
+  return "已完成";
+}
+
+function getTaskFailureStatusText(options, error) {
+  const errorText = getProcessingErrorText(error);
+  if (usesNamedRunningHubUpscale(options)) return `${getUpscaleStatusLabel(options)}失败：${errorText}`;
+  return errorText;
+}
+
+function usesNamedRunningHubUpscale(options) {
+  return options.mode !== "cutout" && resolveUpscaleProvider(options) === "runninghub";
+}
+
+function getUpscaleStatusLabel(options) {
+  return options.upscaleLabel || options.upscaleChoice?.label || getUpscaleChoice(options.upscaleProvider).label;
 }
 
 function resetResultCanvas(item) {

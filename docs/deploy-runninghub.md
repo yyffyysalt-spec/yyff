@@ -1,6 +1,6 @@
-# RunningHub AI 高清增强部署说明
+# RunningHub SeedVR2 高清放大部署说明
 
-这份文档用于把当前网站的“AI 高清增强（实验）”接到 RunningHub 工作流，并通过 Cloudflare Worker 安全中转。
+这份文档用于把当前网站的“SeedVR2 高清放大”接到 RunningHub 工作流，并通过 Cloudflare Worker 安全中转。
 
 ## 当前工作流配置
 
@@ -115,10 +115,18 @@ https://runninghub-upscale-worker.your-subdomain.workers.dev
 ```js
 window.APP_CONFIG = {
   UPSCALE_PROXY_URL: "https://runninghub-upscale-worker.your-subdomain.workers.dev",
+  UPSCALE_WORKFLOWS: [
+    {
+      id: "seedvr2",
+      label: "SeedVR2 高清放大",
+      provider: "runninghub",
+      default: true,
+    },
+  ],
 };
 ```
 
-注意：这里只能放公开 Worker 地址，不能放 RunningHub API Key。
+注意：这里只能放公开 Worker 地址和工作流显示名称，不能放 RunningHub API Key。
 
 ## 部署 GitHub Pages
 
@@ -136,9 +144,9 @@ git push origin main
 https://yyffyysalt-spec.github.io/yyff/
 ```
 
-## GitHub Actions 手动部署
+## GitHub Actions 手动部署（可选）
 
-项目包含 `.github/workflows/deploy.yml`，可以在 GitHub Actions 页面手动触发。
+如果要从 GitHub Actions 页面手动触发 Worker 部署，可以新增 `.github/workflows/deploy.yml`。
 
 需要先在 GitHub 仓库 Settings -> Secrets and variables -> Actions 里添加：
 
@@ -164,14 +172,14 @@ npx wrangler secret put RUNNINGHUB_API_KEY
 4. 点击“开始处理”。
 5. 结果应正常生成，编辑、预览、下载可用。
 
-### AI 高清增强未配置
+### SeedVR2 高清放大未配置
 
 1. 保持 `config.js` 里的 `UPSCALE_PROXY_URL` 为空。
-2. 放大方式选择“AI 高清增强（实验）”。
+2. 放大方式选择“SeedVR2 高清放大”。
 3. 点击“开始处理”。
 4. 任务卡片应显示：`UPSCALE_PROXY_URL 为空：AI 高清增强服务未配置`。
 
-### AI 高清增强成功
+### SeedVR2 高清放大成功
 
 1. `config.js` 填入 Worker URL。
 2. Cloudflare Worker 已配置 `RUNNINGHUB_API_KEY`。
@@ -183,7 +191,7 @@ RUNNINGHUB_IMAGE_NODE_ID=1076
 RUNNINGHUB_IMAGE_FIELD_NAME=image
 ```
 
-4. 放大方式选择“AI 高清增强（实验）”。
+4. 放大方式选择“SeedVR2 高清放大”。
 5. 点击“开始处理”。
 6. 结果应由 RunningHub 返回真实图片 Blob 后写入任务卡片。
 
