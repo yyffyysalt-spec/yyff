@@ -15,8 +15,9 @@ const compressorState = {
 const els = {
   fileInput: document.querySelector("#fileInput"),
   dropZone: document.querySelector("#dropZone"),
+  mainWorkspace: document.querySelector("#mainWorkspace"),
   imageGrid: document.querySelector("#imageGrid"),
-  emptyState: document.querySelector("#emptyState"),
+  emptyState: document.querySelector("#dropZone"),
   processButton: document.querySelector("#processButton"),
   downloadButton: document.querySelector("#downloadButton"),
   clearButton: document.querySelector("#clearButton"),
@@ -40,6 +41,7 @@ const els = {
   sharpenToggle: document.querySelector("#sharpenToggle"),
   checkerToggle: document.querySelector("#checkerToggle"),
   queueStatus: document.querySelector("#queueStatus"),
+  uploadMoreButton: document.querySelector("#uploadMoreButton"),
   progressText: document.querySelector("#progressText"),
   progressBar: document.querySelector("#progressBar"),
   hintText: document.querySelector("#hintText"),
@@ -51,6 +53,8 @@ const els = {
   compressButton: document.querySelector("#compressButton"),
   compressDownloadButton: document.querySelector("#compressDownloadButton"),
   compressStatus: document.querySelector("#compressStatus"),
+  compressToggleButton: document.querySelector("#compressToggleButton"),
+  compressBody: document.querySelector("#compressBody"),
   compressQualitySizes: document.querySelectorAll("[data-quality-size]"),
   compressPreviewCard: document.querySelector("#compressPreviewCard"),
   compressPreviewImage: document.querySelector("#compressPreviewImage"),
@@ -60,6 +64,7 @@ const els = {
   previewTitle: document.querySelector("#previewTitle"),
   previewMeta: document.querySelector("#previewMeta"),
   previewDownloadButton: document.querySelector("#previewDownloadButton"),
+  previewCropActions: document.querySelector("#previewCropActions"),
   previewCropButton: document.querySelector("#previewCropButton"),
   previewApplyCropButton: document.querySelector("#previewApplyCropButton"),
   previewCancelCropButton: document.querySelector("#previewCancelCropButton"),
@@ -92,7 +97,19 @@ const els = {
   editCloseButton: document.querySelector("#editCloseButton"),
 };
 
+els.modelOption = document.querySelector('[data-option="model"]');
+els.scaleOption = document.querySelector('[data-option="scale"]');
+els.upscaleProviderOption = document.querySelector('[data-option="upscale-provider"]');
+els.edgeFeatherOption = document.querySelector('[data-option="edge-feather"]');
+els.edgeShrinkOption = document.querySelector('[data-option="edge-shrink"]');
+els.toleranceOption = document.querySelector('[data-option="tolerance"]');
+els.autoCropOption = document.querySelector('[data-option="auto-crop"]');
+els.sharpenOption = document.querySelector('[data-option="sharpen"]');
+
 const MAX_OUTPUT_PIXELS = 42000000;
+const DEFAULT_EDGE_FEATHER = 2;
+const DEFAULT_EDGE_SHRINK = 0;
+const DEFAULT_AUTO_TRIM = false;
 const MODEL_PRESETS = {
   "local-fast": {
     matting: "standard",
@@ -107,6 +124,8 @@ const MODEL_PRESETS = {
     toleranceScale: 1,
   },
 };
+const UPSCALE_PROVIDER = "runninghub";
+const UPSCALE_PROXY_URL = "";
 const UPSCALE_PROVIDERS = {
   "canvas-resize": {
     label: "普通放大",
@@ -118,9 +137,9 @@ const UPSCALE_PROVIDERS = {
     },
   },
   "ai-enhance": {
-    label: "AI 高清增强",
-    async process() {
-      throw new Error("AI 高清增强暂未配置，请先使用普通放大。");
+    label: "AI 高清增强（实验）",
+    async process(canvas, options) {
+      return upscaleWithRunningHub(canvas, options);
     },
   },
 };
@@ -140,6 +159,7 @@ const COMPRESSION_QUALITY_PRESETS = {
 const COMPRESSION_FALLBACK_MIMES = ["image/jpeg", "image/png"];
 let previewUrl = null;
 let previewItem = null;
+let previewMode = "result";
 let isPreviewCropping = false;
 let previewCropRect = null;
 let previewCropBounds = null;
@@ -155,16 +175,20 @@ let didEditPan = false;
 let editPanStart = { x: 0, y: 0, offsetX: 0, offsetY: 0 };
 let editTool = "pick";
 let penPoints = [];
+let penHoverPoint = null;
+let isPenPathApplied = false;
 let isSelectionInverted = false;
 let isErasing = false;
 let eraserUndoSnapshot = null;
 let eraserRemovedTotal = 0;
 let eraserPreviewPointer = null;
 let eraserLastPoint = null;
+let editPointerId = null;
 let editBackgroundColor = null;
 let compressionEstimateTimer = null;
 let compressionPreviewUrl = null;
 let compressionPreviewBlob = null;
+let isCompressionPanelExpanded = false;
 let gifDecoderModulePromise = null;
 let gifEncoderModulePromise = null;
 
@@ -190,12 +214,17 @@ els.compressFormatSelect.addEventListener("change", scheduleCompressionEstimate)
 els.compressButton.addEventListener("click", compressSelectedFiles);
 els.compressDownloadButton.addEventListener("click", downloadCompressedFiles);
 els.compressPreviewCard.addEventListener("click", openCompressionPreview);
+els.compressToggleButton.addEventListener("click", toggleCompressionPanel);
 els.modelSelect.addEventListener("change", () => {
   updateApiControls();
   updateUi();
 });
 document.querySelectorAll('input[name="mode"]').forEach((input) => {
-  input.addEventListener("change", updateUi);
+  input.addEventListener("change", () => {
+    updateOptionVisibility();
+    updateApiControls();
+    updateUi();
+  });
 });
 [els.pixianApiIdInput, els.pixianApiSecretInput].forEach((input) => {
   input.addEventListener("input", () => {
@@ -213,29 +242,34 @@ els.koukoutuApiKeyInput.addEventListener("input", () => {
 els.koukoutuCheckCreditsButton.addEventListener("click", checkKoukoutuCredits);
 loadPixianCredentials();
 loadKoukoutuCredentials();
+updateOptionVisibility();
 updateApiControls();
+setCompressionPanelExpanded(false);
 updateCompressionQualityControls();
 
 els.fileInput.addEventListener("change", (event) => {
   addFiles([...event.target.files]);
   els.fileInput.value = "";
 });
+els.uploadMoreButton.addEventListener("click", () => {
+  els.fileInput.click();
+});
 
 ["dragenter", "dragover"].forEach((name) => {
-  els.dropZone.addEventListener(name, (event) => {
+  els.mainWorkspace.addEventListener(name, (event) => {
     event.preventDefault();
-    els.dropZone.classList.add("is-dragging");
+    setWorkspaceDragging(true);
   });
 });
 
-["dragleave", "drop"].forEach((name) => {
-  els.dropZone.addEventListener(name, (event) => {
-    event.preventDefault();
-    els.dropZone.classList.remove("is-dragging");
-  });
+els.mainWorkspace.addEventListener("dragleave", (event) => {
+  event.preventDefault();
+  if (!els.mainWorkspace.contains(event.relatedTarget)) setWorkspaceDragging(false);
 });
 
-els.dropZone.addEventListener("drop", (event) => {
+els.mainWorkspace.addEventListener("drop", (event) => {
+  event.preventDefault();
+  setWorkspaceDragging(false);
   addFiles([...event.dataTransfer.files].filter((file) => file.type.startsWith("image/")));
 });
 
@@ -277,21 +311,21 @@ document.querySelectorAll('input[name="editTool"]').forEach((input) => {
 els.editCloseButton.addEventListener("click", () => els.editModal.close());
 els.editUndoButton.addEventListener("click", undoEditStep);
 els.editApplyButton.addEventListener("click", applyEditResult);
-els.editCanvas.addEventListener("click", handleEditPick);
 els.fillBackgroundButton.addEventListener("click", fillEditBackgroundColor);
 els.clearBackgroundButton.addEventListener("click", clearEditBackgroundColor);
 els.invertSelectionButton.addEventListener("click", toggleSelectionInvert);
 els.finishPenButton.addEventListener("click", applyPenErase);
 els.clearPenButton.addEventListener("click", clearPenPath);
 els.editCanvasWrap.addEventListener("wheel", handleEditWheel, { passive: false });
-els.editCanvasWrap.addEventListener("mousedown", startEditPan);
-els.editCanvasWrap.addEventListener("mousemove", updateEraserBrushPreview);
-els.editCanvasWrap.addEventListener("mouseenter", updateEraserBrushPreview);
-els.editCanvasWrap.addEventListener("mouseleave", hideEraserBrushPreview);
+els.editCanvasWrap.addEventListener("pointerdown", startEditPointer);
+els.editCanvasWrap.addEventListener("pointermove", moveEditPointer);
+els.editCanvasWrap.addEventListener("pointerup", endEditPointer);
+els.editCanvasWrap.addEventListener("pointercancel", cancelEditPointer);
+els.editCanvasWrap.addEventListener("pointerenter", updateEraserBrushPreview);
+els.editCanvasWrap.addEventListener("pointerleave", handleEditPointerLeave);
 els.editCanvasWrap.addEventListener("keydown", handleEditKeydown);
 document.addEventListener("keydown", handleEditUndoShortcut);
-window.addEventListener("mousemove", moveEditPan);
-window.addEventListener("mouseup", endEditPan);
+document.addEventListener("keydown", handleEditorDeleteKeydown, true);
 window.addEventListener("resize", () => {
   if (els.editModal.open) fitEditCanvasToView();
 });
@@ -1057,6 +1091,20 @@ function updateCompressionQualitySizeLabels() {
   });
 }
 
+function toggleCompressionPanel() {
+  if (isCompressionPanelExpanded && compressorState.isProcessing) return;
+  setCompressionPanelExpanded(!isCompressionPanelExpanded);
+}
+
+function setCompressionPanelExpanded(expanded) {
+  isCompressionPanelExpanded = expanded;
+  const panel = els.compressToggleButton.closest(".compress-panel");
+  panel.classList.toggle("is-collapsed", !expanded);
+  panel.classList.toggle("is-expanded", expanded);
+  els.compressBody.hidden = !expanded;
+  els.compressToggleButton.setAttribute("aria-expanded", String(expanded));
+}
+
 function updateCompressionUi(statusText = "") {
   const successful = compressorState.results.filter((result) => result.blob);
   const failed = compressorState.results.filter((result) => result.error);
@@ -1105,7 +1153,7 @@ function clearCompressionPreviewUrl() {
 
 function openCompressionPreview() {
   const result = compressorState.results.find((item) => item.blob);
-  if (result) openPreview(result);
+  if (result) openPreview(result, { mode: "compress" });
 }
 
 async function downloadCompressedFiles() {
@@ -1146,6 +1194,7 @@ function createItem(file, url, bitmap) {
   const original = fragment.querySelector(".original-preview");
   const resultCanvas = fragment.querySelector(".result-canvas");
   const status = fragment.querySelector(".card-status");
+  const deleteButton = fragment.querySelector(".delete-button");
   const editButton = fragment.querySelector(".edit-button");
   const downloadButton = fragment.querySelector(".download-button");
 
@@ -1164,8 +1213,10 @@ function createItem(file, url, bitmap) {
     url,
     bitmap,
     card,
+    original,
     resultCanvas,
     status,
+    deleteButton,
     editButton,
     downloadButton,
     blob: null,
@@ -1174,15 +1225,16 @@ function createItem(file, url, bitmap) {
     outputName: makeOutputName(file.name),
   };
 
+  deleteButton.addEventListener("click", () => removeQueueItem(item));
   downloadButton.addEventListener("click", () => {
     if (item.blob) downloadBlob(item.blob, item.outputName);
   });
   editButton.addEventListener("click", () => openEditor(item));
-  resultCanvas.addEventListener("click", () => openPreview(item));
+  resultCanvas.addEventListener("click", () => openPreview(item, { mode: "result" }));
   resultCanvas.addEventListener("keydown", (event) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      openPreview(item);
+      openPreview(item, { mode: "result" });
     }
   });
 
@@ -1198,6 +1250,7 @@ async function processQueue() {
     item.blob = null;
     item.editorSubjectCanvas = null;
     item.editorBackgroundColor = null;
+    item.deleteButton.disabled = true;
     item.editButton.disabled = true;
     item.downloadButton.disabled = true;
     item.resultCanvas.classList.remove("is-previewable");
@@ -1214,6 +1267,7 @@ async function processQueue() {
       const outputCanvas = await processItem(item, options);
       copyCanvas(outputCanvas, item.resultCanvas);
       item.blob = await canvasToBlob(outputCanvas);
+      item.deleteButton.disabled = false;
       item.editButton.disabled = false;
       item.downloadButton.disabled = false;
       item.resultCanvas.classList.add("is-previewable");
@@ -1234,14 +1288,15 @@ async function processQueue() {
   updateUi();
 }
 
-function openPreview(item) {
+function openPreview(item, { mode = item.resultCanvas ? "result" : "compress" } = {}) {
   if (!item.blob) return;
   clearPreviewModal();
   previewItem = item;
+  previewMode = mode;
   previewUrl = URL.createObjectURL(item.blob);
   const width = item.resultCanvas?.width ?? item.width ?? 0;
   const height = item.resultCanvas?.height ?? item.height ?? 0;
-  const isCompressionPreview = !item.resultCanvas;
+  const isCompressionPreview = mode === "compress";
   els.previewImage.src = previewUrl;
   els.previewTitle.textContent = item.outputName;
   els.previewMeta.textContent = isCompressionPreview
@@ -1262,11 +1317,13 @@ function clearPreviewModal() {
     previewUrl = null;
   }
   previewItem = null;
+  previewMode = "result";
   setPreviewCropControls(false);
   els.previewImage.removeAttribute("src");
 }
 
 function setPreviewCropControls(canCrop) {
+  els.previewCropActions.hidden = !canCrop;
   els.previewCropButton.hidden = !canCrop;
   els.previewApplyCropButton.hidden = true;
   els.previewCancelCropButton.hidden = true;
@@ -1278,7 +1335,7 @@ function setPreviewCropControls(canCrop) {
 }
 
 async function startPreviewCrop() {
-  if (!previewItem || previewItem.resultCanvas) return;
+  if (!previewItem || previewMode !== "compress") return;
   await waitForPreviewImage();
   updatePreviewCropBounds();
   if (!previewCropBounds?.width || !previewCropBounds?.height) return;
@@ -1305,7 +1362,9 @@ function stopPreviewCrop() {
   previewCropBounds = null;
   previewCropDrag = null;
   els.previewCropOverlay.hidden = true;
-  if (previewItem && !previewItem.resultCanvas) els.previewCropButton.hidden = false;
+  const canCrop = previewMode === "compress" && Boolean(previewItem);
+  els.previewCropActions.hidden = !canCrop;
+  els.previewCropButton.hidden = !canCrop;
   els.previewApplyCropButton.hidden = true;
   els.previewCancelCropButton.hidden = true;
 }
@@ -1400,7 +1459,7 @@ function resizePreviewCropRect(startRect, handle, dx, dy, bounds) {
 }
 
 async function applyPreviewCrop() {
-  if (!previewItem || !previewCropRect || !previewCropBounds) return;
+  if (previewMode !== "compress" || !previewItem || !previewCropRect || !previewCropBounds) return;
   const cropRect = getPreviewCropPixelRect();
   if (!cropRect.width || !cropRect.height) return;
 
@@ -1517,6 +1576,8 @@ function openEditor(item) {
   editUndoStack = [];
   editPickCount = 0;
   penPoints = [];
+  penHoverPoint = null;
+  isPenPathApplied = false;
   isSelectionInverted = false;
   isErasing = false;
   eraserUndoSnapshot = null;
@@ -1529,8 +1590,6 @@ function openEditor(item) {
   els.editBackgroundCanvas.height = item.resultCanvas.height;
   els.editCanvas.width = item.resultCanvas.width;
   els.editCanvas.height = item.resultCanvas.height;
-  els.penOverlayCanvas.width = item.resultCanvas.width;
-  els.penOverlayCanvas.height = item.resultCanvas.height;
   els.editBackgroundCanvas.style.width = "";
   els.editBackgroundCanvas.style.height = "";
   els.editBackgroundCanvas.style.transform = "";
@@ -1555,27 +1614,17 @@ function openEditor(item) {
     els.editModal.setAttribute("open", "");
   }
   requestAnimationFrame(fitEditCanvasToView);
-  requestAnimationFrame(() => els.editCanvasWrap.focus());
+  requestAnimationFrame(() => {
+    syncPenOverlayCanvasSize();
+    drawPenOverlay();
+    els.editCanvasWrap.focus();
+  });
 }
 
-function handleEditPick(event) {
-  if (!editItem) return;
-  if (didEditPan) {
-    return;
-  }
-  const point = getEditCanvasPoint(event);
-  if (!point) return;
-  const { x, y } = point;
-
-  if (editTool === "eraser") {
-    return;
-  }
-
-  if (editTool === "pen") {
-    addPenPoint(x, y);
-    return;
-  }
-
+function performEditPickAt(point) {
+  if (!editItem || !point?.isInsideImage || editTool !== "pick") return;
+  const x = Math.floor(point.x);
+  const y = Math.floor(point.y);
   const ctx = els.editCanvas.getContext("2d", { willReadFrequently: true });
   const before = ctx.getImageData(0, 0, els.editCanvas.width, els.editCanvas.height);
   const removed = smartEraseAt(
@@ -1627,12 +1676,15 @@ function clearEditModal() {
   editUndoStack = [];
   editPickCount = 0;
   penPoints = [];
+  penHoverPoint = null;
+  isPenPathApplied = false;
   isSelectionInverted = false;
   isErasing = false;
   eraserUndoSnapshot = null;
   eraserRemovedTotal = 0;
   eraserPreviewPointer = null;
   eraserLastPoint = null;
+  editPointerId = null;
   editBackgroundColor = null;
   hideEraserBrushPreview();
   clearPenOverlay();
@@ -1658,7 +1710,7 @@ function updateEditMeta(removed = 0, detailText = "") {
 }
 
 function updateEditUndoButton() {
-  const hasPenPathUndo = penPoints.length > 0;
+  const hasPenPathUndo = penPoints.length > 0 && !isPenPathApplied;
   els.editUndoButton.disabled = editUndoStack.length === 0 && !hasPenPathUndo;
   els.clearBackgroundButton.disabled = !editBackgroundColor;
 }
@@ -1678,6 +1730,12 @@ function setEditTool(tool) {
 }
 
 function addPenPoint(x, y) {
+  if (isPenPathApplied) {
+    penPoints = [];
+    penHoverPoint = null;
+    isSelectionInverted = false;
+    isPenPathApplied = false;
+  }
   penPoints.push({ x, y });
   drawPenOverlay();
   updatePenButtons();
@@ -1685,7 +1743,13 @@ function addPenPoint(x, y) {
 }
 
 function clearPenPath() {
+  clearCurrentPenPath();
+}
+
+function clearCurrentPenPath() {
   penPoints = [];
+  penHoverPoint = null;
+  isPenPathApplied = false;
   isSelectionInverted = false;
   clearPenOverlay();
   updatePenButtons();
@@ -1693,7 +1757,7 @@ function clearPenPath() {
 }
 
 function undoPenPathPoint() {
-  if (!penPoints.length) return false;
+  if (!penPoints.length || isPenPathApplied) return false;
   penPoints.pop();
   if (penPoints.length < 3) isSelectionInverted = false;
   drawPenOverlay();
@@ -1704,37 +1768,41 @@ function undoPenPathPoint() {
 
 function updatePenButtons() {
   const isPen = editTool === "pen";
-  els.invertSelectionButton.disabled = !isPen || penPoints.length < 3;
+  els.invertSelectionButton.disabled = !isPen || isPenPathApplied || penPoints.length < 3;
   els.invertSelectionButton.classList.toggle("is-active", isPen && isSelectionInverted);
   els.invertSelectionButton.textContent = isSelectionInverted ? "已反转" : "反转选区";
-  els.finishPenButton.disabled = !isPen || penPoints.length < 3;
+  els.finishPenButton.disabled = !isPen || isPenPathApplied || penPoints.length < 3;
   els.clearPenButton.disabled = !isPen || penPoints.length === 0;
   updateEditUndoButton();
 }
 
 function toggleSelectionInvert() {
-  if (editTool !== "pen" || penPoints.length < 3) return;
+  if (editTool !== "pen" || isPenPathApplied || penPoints.length < 3) return;
   isSelectionInverted = !isSelectionInverted;
   drawPenOverlay();
   updatePenButtons();
 }
 
 function clearPenOverlay() {
+  syncPenOverlayCanvasSize();
   const ctx = els.penOverlayCanvas.getContext("2d");
   ctx.clearRect(0, 0, els.penOverlayCanvas.width, els.penOverlayCanvas.height);
 }
 
 function drawPenOverlay() {
+  syncPenOverlayCanvasSize();
   const ctx = els.penOverlayCanvas.getContext("2d");
   clearPenOverlay();
   if (!penPoints.length) return;
 
-  const displayScale = getEditDisplayScale();
-  const fixedLineWidth = 3 / displayScale;
-  const fixedDash = 9 / displayScale;
-  const fixedGap = 7 / displayScale;
-  const fixedPointRadius = 3 / displayScale;
-  const fixedPointLineWidth = 0.8 / displayScale;
+  const stagePoints = penPoints.map((point) => imagePointToEditStagePoint(point));
+  const hoverStagePoint =
+    penHoverPoint && !isPenPathApplied ? imagePointToEditStagePoint(penHoverPoint) : null;
+  const fixedLineWidth = isPenPathApplied ? 2 : 2.4;
+  const fixedDash = 9;
+  const fixedGap = 7;
+  const fixedPointRadius = isPenPathApplied ? 3 : 3.5;
+  const fixedPointLineWidth = 1;
 
   ctx.save();
   ctx.lineWidth = fixedLineWidth;
@@ -1744,8 +1812,8 @@ function drawPenOverlay() {
   if (isSelectionInverted && penPoints.length >= 3) {
     ctx.beginPath();
     ctx.rect(0, 0, els.penOverlayCanvas.width, els.penOverlayCanvas.height);
-    ctx.moveTo(penPoints[0].x, penPoints[0].y);
-    for (const point of penPoints.slice(1)) {
+    ctx.moveTo(stagePoints[0].x, stagePoints[0].y);
+    for (const point of stagePoints.slice(1)) {
       ctx.lineTo(point.x, point.y);
     }
     ctx.closePath();
@@ -1754,8 +1822,8 @@ function drawPenOverlay() {
 
   ctx.setLineDash([fixedDash, fixedGap]);
   ctx.beginPath();
-  ctx.moveTo(penPoints[0].x, penPoints[0].y);
-  for (const point of penPoints.slice(1)) {
+  ctx.moveTo(stagePoints[0].x, stagePoints[0].y);
+  for (const point of stagePoints.slice(1)) {
     ctx.lineTo(point.x, point.y);
   }
   if (penPoints.length >= 3) {
@@ -1765,7 +1833,20 @@ function drawPenOverlay() {
   ctx.stroke();
   ctx.setLineDash([]);
 
-  for (const point of penPoints) {
+  if (hoverStagePoint && penPoints.length > 0) {
+    const lastPoint = stagePoints[stagePoints.length - 1];
+    ctx.save();
+    ctx.strokeStyle = "rgba(15, 123, 104, 0.72)";
+    ctx.lineWidth = 1.6;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(lastPoint.x, lastPoint.y);
+    ctx.lineTo(hoverStagePoint.x, hoverStagePoint.y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  for (const point of stagePoints) {
     ctx.beginPath();
     ctx.fillStyle = "#ffffff";
     ctx.arc(point.x, point.y, fixedPointRadius, 0, Math.PI * 2);
@@ -1782,6 +1863,24 @@ function getEditDisplayScale() {
   return Math.max(0.01, rect.width / Math.max(1, els.editCanvas.width));
 }
 
+function syncPenOverlayCanvasSize() {
+  const rect = els.editCanvasWrap.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const width = Math.max(1, Math.round(rect.width));
+  const height = Math.max(1, Math.round(rect.height));
+  if (els.penOverlayCanvas.width !== width) els.penOverlayCanvas.width = width;
+  if (els.penOverlayCanvas.height !== height) els.penOverlayCanvas.height = height;
+}
+
+function imagePointToEditStagePoint(point) {
+  const wrapRect = els.editCanvasWrap.getBoundingClientRect();
+  const imageRect = els.editCanvas.getBoundingClientRect();
+  return {
+    x: imageRect.left - wrapRect.left + (point.x / Math.max(1, els.editCanvas.width)) * imageRect.width,
+    y: imageRect.top - wrapRect.top + (point.y / Math.max(1, els.editCanvas.height)) * imageRect.height,
+  };
+}
+
 function applyPenErase() {
   if (!editItem || penPoints.length < 3) return;
   const ctx = els.editCanvas.getContext("2d", { willReadFrequently: true });
@@ -1791,8 +1890,10 @@ function applyPenErase() {
 
   editUndoStack.push(before);
   editPickCount += 1;
-  clearPenPath();
+  isPenPathApplied = true;
+  drawPenOverlay();
   updateEditMeta(removed);
+  updatePenButtons();
   updateEditUndoButton();
 }
 
@@ -1862,8 +1963,6 @@ function applyEditViewScale(anchor = null) {
   els.editBackgroundCanvas.style.height = `${newHeight}px`;
   els.editCanvas.style.width = `${newWidth}px`;
   els.editCanvas.style.height = `${newHeight}px`;
-  els.penOverlayCanvas.style.width = `${newWidth}px`;
-  els.penOverlayCanvas.style.height = `${newHeight}px`;
 
   if (anchor) {
     editViewOffset = {
@@ -1873,7 +1972,6 @@ function applyEditViewScale(anchor = null) {
   }
   clampEditViewOffset(newWidth, newHeight);
   applyEditCanvasTransform();
-  drawPenOverlay();
   updateEraserBrushPreview();
 }
 
@@ -1881,7 +1979,7 @@ function applyEditCanvasTransform() {
   const transform = `translate(-50%, -50%) translate(${Math.round(editViewOffset.x)}px, ${Math.round(editViewOffset.y)}px)`;
   els.editBackgroundCanvas.style.transform = transform;
   els.editCanvas.style.transform = transform;
-  els.penOverlayCanvas.style.transform = transform;
+  drawPenOverlay();
 }
 
 function clampEditViewOffset(displayWidth = els.editCanvas.getBoundingClientRect().width, displayHeight = els.editCanvas.getBoundingClientRect().height) {
@@ -1910,14 +2008,42 @@ function handleEditWheel(event) {
   setEditViewScale(editViewScale * factor, anchor);
 }
 
-function startEditPan(event) {
+function getEditorPointerPosition(event) {
+  const wrapRect = els.editCanvasWrap.getBoundingClientRect();
+  const rect = els.editCanvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  const stageX = event.clientX - wrapRect.left;
+  const stageY = event.clientY - wrapRect.top;
+  const x = ((event.clientX - rect.left) / rect.width) * els.editCanvas.width;
+  const y = ((event.clientY - rect.top) / rect.height) * els.editCanvas.height;
+  const isInsideImage = x >= 0 && y >= 0 && x < els.editCanvas.width && y < els.editCanvas.height;
+  const isInsideStage = stageX >= 0 && stageY >= 0 && stageX <= wrapRect.width && stageY <= wrapRect.height;
+  return { x, y, stageX, stageY, isInsideImage, isInsideStage };
+}
+
+function startEditPointer(event) {
   if (!editItem || event.button !== 0) return;
   els.editCanvasWrap.focus();
+  editPointerId = event.pointerId;
+  els.editCanvasWrap.setPointerCapture?.(event.pointerId);
+  updateEraserBrushPreview(event);
+
   if (editTool === "eraser") {
-    updateEraserBrushPreview(event);
+    event.preventDefault();
     startEraserStroke(event);
     return;
   }
+
+  if (editTool === "pen") {
+    event.preventDefault();
+    const point = getEditorPointerPosition(event);
+    if (point) {
+      penHoverPoint = { x: point.x, y: point.y };
+      addPenPoint(point.x, point.y);
+    }
+    return;
+  }
+
   isEditPanning = true;
   didEditPan = false;
   editPanStart = {
@@ -1929,12 +2055,22 @@ function startEditPan(event) {
   els.editCanvasWrap.classList.add("is-panning");
 }
 
-function moveEditPan(event) {
-  if (editTool === "eraser") updateEraserBrushPreview(event);
+function moveEditPointer(event) {
+  if (!editItem) return;
+  updateEraserBrushPreview(event);
+
   if (isErasing) {
     moveEraserStroke(event);
     return;
   }
+
+  if (editTool === "pen") {
+    const point = getEditorPointerPosition(event);
+    penHoverPoint = point ? { x: point.x, y: point.y } : null;
+    drawPenOverlay();
+    return;
+  }
+
   if (!isEditPanning) return;
   const dx = event.clientX - editPanStart.x;
   const dy = event.clientY - editPanStart.y;
@@ -1947,32 +2083,55 @@ function moveEditPan(event) {
   applyEditCanvasTransform();
 }
 
-function endEditPan() {
+function endEditPointer(event) {
+  if (editPointerId !== null) {
+    try {
+      els.editCanvasWrap.releasePointerCapture?.(editPointerId);
+    } catch {
+      // Pointer capture can already be released by the browser.
+    }
+  }
+  editPointerId = null;
+
   if (isErasing) {
     endEraserStroke();
     return;
   }
+
   if (!isEditPanning) return;
+  const wasPanning = didEditPan;
   isEditPanning = false;
   els.editCanvasWrap.classList.remove("is-panning");
-  if (didEditPan) {
+  if (!wasPanning) performEditPickAt(getEditorPointerPosition(event));
+  if (wasPanning) {
     setTimeout(() => {
       didEditPan = false;
     }, 0);
+  } else {
+    didEditPan = false;
   }
 }
 
-function getEditCanvasPoint(event) {
-  const rect = els.editCanvas.getBoundingClientRect();
-  if (!rect.width || !rect.height) return null;
-  const x = Math.floor(((event.clientX - rect.left) / rect.width) * els.editCanvas.width);
-  const y = Math.floor(((event.clientY - rect.top) / rect.height) * els.editCanvas.height);
-  if (x < 0 || y < 0 || x >= els.editCanvas.width || y >= els.editCanvas.height) return null;
-  return { x, y };
+function cancelEditPointer() {
+  editPointerId = null;
+  if (isErasing) endEraserStroke();
+  if (isEditPanning) {
+    isEditPanning = false;
+    els.editCanvasWrap.classList.remove("is-panning");
+  }
+  didEditPan = false;
+}
+
+function handleEditPointerLeave() {
+  if (editTool === "pen") {
+    penHoverPoint = null;
+    drawPenOverlay();
+  }
+  if (!isErasing) hideEraserBrushPreview();
 }
 
 function startEraserStroke(event) {
-  const point = getEditCanvasPoint(event);
+  const point = getEditorPointerPosition(event);
   if (!point) return;
   const ctx = els.editCanvas.getContext("2d", { willReadFrequently: true });
   eraserUndoSnapshot = ctx.getImageData(0, 0, els.editCanvas.width, els.editCanvas.height);
@@ -1985,7 +2144,7 @@ function startEraserStroke(event) {
 }
 
 function moveEraserStroke(event) {
-  const point = getEditCanvasPoint(event);
+  const point = getEditorPointerPosition(event);
   if (!point) return;
   eraseStrokeToPoint(point);
 }
@@ -2194,6 +2353,16 @@ function handleEditKeydown(event) {
   }
 }
 
+function handleEditorDeleteKeydown(event) {
+  if (!editItem || !els.editModal.open || editTool !== "pen") return;
+  if (event.key !== "Delete" && event.key !== "Backspace") return;
+  if (isEditableInputTarget(event.target)) return;
+  if (!penPoints.length) return;
+  event.preventDefault();
+  event.stopPropagation();
+  clearCurrentPenPath();
+}
+
 function handleEditUndoShortcut(event) {
   if (!editItem || !els.editModal.open || !isUndoShortcut(event)) return;
   event.preventDefault();
@@ -2203,6 +2372,18 @@ function handleEditUndoShortcut(event) {
 
 function isUndoShortcut(event) {
   return (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "z";
+}
+
+function isEditableInputTarget(target) {
+  if (!(target instanceof Element)) return false;
+  const tagName = target.tagName.toLowerCase();
+  return (
+    target.isContentEditable ||
+    tagName === "input" ||
+    tagName === "textarea" ||
+    tagName === "select" ||
+    target.closest("[contenteditable='true']")
+  );
 }
 
 function moveEditCanvasImage(dx, dy) {
@@ -2217,7 +2398,7 @@ function moveEditCanvasImage(dx, dy) {
 
 function updateEraserBrushPreview(event = null) {
   if (event?.clientX !== undefined && event?.clientY !== undefined) {
-    eraserPreviewPointer = { x: event.clientX, y: event.clientY };
+    eraserPreviewPointer = getEditorPointerPosition(event);
   }
   if (!editItem || editTool !== "eraser" || !eraserPreviewPointer) {
     hideEraserBrushPreview();
@@ -2225,15 +2406,9 @@ function updateEraserBrushPreview(event = null) {
   }
 
   const canvasRect = els.editCanvas.getBoundingClientRect();
-  const wrapRect = els.editCanvasWrap.getBoundingClientRect();
   const pointer = eraserPreviewPointer;
-  const isInsideCanvas =
-    pointer.x >= canvasRect.left &&
-    pointer.x <= canvasRect.right &&
-    pointer.y >= canvasRect.top &&
-    pointer.y <= canvasRect.bottom;
 
-  if (!canvasRect.width || !canvasRect.height || !isInsideCanvas) {
+  if (!canvasRect.width || !canvasRect.height || (!pointer.isInsideStage && !isErasing)) {
     hideEraserBrushPreview();
     return;
   }
@@ -2243,7 +2418,7 @@ function updateEraserBrushPreview(event = null) {
   els.eraserBrushPreview.hidden = false;
   els.eraserBrushPreview.style.width = `${diameter}px`;
   els.eraserBrushPreview.style.height = `${diameter}px`;
-  els.eraserBrushPreview.style.transform = `translate(${pointer.x - wrapRect.left}px, ${pointer.y - wrapRect.top}px) translate(-50%, -50%)`;
+  els.eraserBrushPreview.style.transform = `translate(${pointer.stageX}px, ${pointer.stageY}px) translate(-50%, -50%)`;
 }
 
 function hideEraserBrushPreview() {
@@ -2272,19 +2447,20 @@ async function processItem(item, options) {
 function readOptions() {
   const model = els.modelSelect.value;
   const preset = MODEL_PRESETS[model] ?? MODEL_PRESETS["local-fast"];
+  const mode = getSelectedMode();
 
   return {
-    mode: document.querySelector('input[name="mode"]:checked').value,
+    mode,
     model,
     matting: preset.matting,
     scale: Number(els.scaleSelect.value),
     upscaleProvider: els.upscaleProviderSelect.value,
     tolerance: Number(els.toleranceRange.value) * preset.toleranceScale,
-    feather: Number(els.featherSelect.value),
-    shrink: Number(els.shrinkSelect.value),
+    feather: DEFAULT_EDGE_FEATHER,
+    shrink: DEFAULT_EDGE_SHRINK,
     backgroundColor: null,
-    trim: els.trimToggle.checked,
-    sharpen: els.sharpenToggle.checked,
+    trim: DEFAULT_AUTO_TRIM,
+    sharpen: mode !== "cutout" && els.sharpenToggle.checked,
     pixianApiId: els.pixianApiIdInput.value.trim(),
     pixianApiSecret: els.pixianApiSecretInput.value.trim(),
     koukoutuProxyUrl: KOUKOUTU_PROXY_URL,
@@ -2316,7 +2492,7 @@ function updateApiControls() {
 }
 
 function updatePixianControls() {
-  const isPixian = els.modelSelect.value === "pixian-ai";
+  const isPixian = els.modelSelect.value === "pixian-ai" && getSelectedMode() !== "upscale";
   els.pixianPanel.hidden = !isPixian;
   els.pixianApiIdInput.disabled = !isPixian;
   els.pixianApiSecretInput.disabled = !isPixian;
@@ -2325,11 +2501,32 @@ function updatePixianControls() {
 }
 
 function updateKoukoutuControls() {
-  const isKoukoutu = els.modelSelect.value === "koukoutu";
+  const isKoukoutu = els.modelSelect.value === "koukoutu" && getSelectedMode() !== "upscale";
   els.koukoutuPanel.hidden = !isKoukoutu;
   els.koukoutuApiKeyInput.disabled = !isKoukoutu;
   els.koukoutuCheckCreditsButton.disabled = !isKoukoutu || !hasKoukoutuCredentials();
   if (!isKoukoutu) clearKoukoutuCreditStatus();
+}
+
+function updateOptionVisibility() {
+  const mode = getSelectedMode();
+  const needsCutoutOptions = mode !== "upscale";
+  const needsUpscaleOptions = mode !== "cutout";
+
+  setElementHidden(els.edgeFeatherOption, true);
+  setElementHidden(els.edgeShrinkOption, true);
+  setElementHidden(els.autoCropOption, true);
+
+  setElementHidden(els.modelOption, !needsCutoutOptions);
+  setElementHidden(els.toleranceOption, !needsCutoutOptions);
+
+  setElementHidden(els.scaleOption, !needsUpscaleOptions);
+  setElementHidden(els.upscaleProviderOption, !needsUpscaleOptions);
+  setElementHidden(els.sharpenOption, !needsUpscaleOptions);
+}
+
+function setElementHidden(element, hidden) {
+  if (element) element.hidden = hidden;
 }
 
 function getSelectedMode() {
@@ -2634,7 +2831,7 @@ function normalizeKoukoutuProxyUrl(value) {
 
 function isExpectedProcessingError(error) {
   const message = String(error?.message || error || "");
-  return /AI 高清增强暂未配置/.test(message);
+  return /AI 高清增强(?:服务)?未配置/.test(message);
 }
 
 function getProcessingErrorText(error) {
@@ -3175,8 +3372,163 @@ function getSafeScale(canvas, requestedScale) {
 }
 
 async function upscaleWithProvider(canvas, options) {
-  const provider = UPSCALE_PROVIDERS[options.upscaleProvider] ?? UPSCALE_PROVIDERS["canvas-resize"];
+  const providerKey = resolveUpscaleProvider(options);
+  const provider =
+    providerKey === "runninghub"
+      ? UPSCALE_PROVIDERS["ai-enhance"]
+      : UPSCALE_PROVIDERS["canvas-resize"];
   return provider.process(canvas, options);
+}
+
+function resolveUpscaleProvider(options) {
+  const requested = options.provider || options.upscaleProvider;
+  if (requested === "runninghub" || requested === "ai-enhance") return UPSCALE_PROVIDER;
+  return "resize";
+}
+
+async function upscaleWithRunningHub(canvas, options) {
+  const scale = Number(options.scale);
+  const preserveAlpha = options.preserveAlpha !== false;
+  if (!UPSCALE_PROXY_URL) throw new Error("AI 高清增强服务未配置");
+  if (![2, 4].includes(scale)) throw new Error("AI 高清增强仅支持 2x 或 4x");
+
+  const hasAlpha = preserveAlpha && canvasHasAnyTransparency(canvas);
+  const sourceForAi = hasAlpha ? createOpaqueRgbCanvas(canvas) : canvas;
+  const sourceBlob = await canvasToBlob(sourceForAi, "image/png");
+  const enhancedRgb = await requestRunningHubUpscale(sourceBlob, { scale, preserveAlpha: hasAlpha });
+
+  if (!hasAlpha) return enhancedRgb;
+
+  const alphaMask = createAlphaCanvas(canvas);
+  const resizedAlpha = resizeCanvasTo(alphaMask, Math.round(canvas.width * scale), Math.round(canvas.height * scale));
+  return composeRgbWithAlpha(enhancedRgb, resizedAlpha);
+}
+
+async function requestRunningHubUpscale(blob, { scale, preserveAlpha }) {
+  const body = new FormData();
+  body.set("image", blob, "input.png");
+  body.set("scale", String(scale));
+  body.set("preserveAlpha", preserveAlpha ? "1" : "0");
+
+  const response = await fetch(UPSCALE_PROXY_URL, {
+    method: "POST",
+    body,
+  });
+
+  if (!response.ok) {
+    const message = await readErrorMessage(response);
+    throw new Error(message || "AI 高清增强处理失败");
+  }
+
+  return blobToCanvas(await response.blob());
+}
+
+function canvasHasAnyTransparency(canvas) {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  for (let index = 3; index < data.length; index += 4) {
+    if (data[index] < 255) return true;
+  }
+  return false;
+}
+
+function createOpaqueRgbCanvas(canvas) {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = image.data;
+  const fill = getAverageOpaqueColor(data);
+
+  for (let index = 0; index < data.length; index += 4) {
+    const alpha = data[index + 3];
+    if (alpha === 0) {
+      data[index] = fill.r;
+      data[index + 1] = fill.g;
+      data[index + 2] = fill.b;
+    }
+    data[index + 3] = 255;
+  }
+
+  const output = document.createElement("canvas");
+  output.width = canvas.width;
+  output.height = canvas.height;
+  output.getContext("2d").putImageData(image, 0, 0);
+  return output;
+}
+
+function getAverageOpaqueColor(data) {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let count = 0;
+
+  for (let index = 0; index < data.length; index += 4) {
+    const alpha = data[index + 3];
+    if (alpha < 32) continue;
+    r += data[index];
+    g += data[index + 1];
+    b += data[index + 2];
+    count += 1;
+  }
+
+  if (!count) return { r: 255, g: 255, b: 255 };
+  return {
+    r: Math.round(r / count),
+    g: Math.round(g / count),
+    b: Math.round(b / count),
+  };
+}
+
+function createAlphaCanvas(canvas) {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const source = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = source.data;
+  for (let index = 0; index < data.length; index += 4) {
+    const alpha = data[index + 3];
+    data[index] = alpha;
+    data[index + 1] = alpha;
+    data[index + 2] = alpha;
+    data[index + 3] = 255;
+  }
+
+  const output = document.createElement("canvas");
+  output.width = canvas.width;
+  output.height = canvas.height;
+  output.getContext("2d").putImageData(source, 0, 0);
+  return output;
+}
+
+function resizeCanvasTo(canvas, width, height) {
+  const output = document.createElement("canvas");
+  output.width = Math.max(1, Math.round(width));
+  output.height = Math.max(1, Math.round(height));
+  const ctx = output.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(canvas, 0, 0, output.width, output.height);
+  return output;
+}
+
+function composeRgbWithAlpha(rgbCanvas, alphaCanvas) {
+  const output = resizeCanvasTo(rgbCanvas, alphaCanvas.width, alphaCanvas.height);
+  const outCtx = output.getContext("2d", { willReadFrequently: true });
+  const alphaCtx = alphaCanvas.getContext("2d", { willReadFrequently: true });
+  const rgbImage = outCtx.getImageData(0, 0, output.width, output.height);
+  const alphaImage = alphaCtx.getImageData(0, 0, alphaCanvas.width, alphaCanvas.height);
+  const rgbData = rgbImage.data;
+  const alphaData = alphaImage.data;
+
+  for (let index = 0; index < rgbData.length; index += 4) {
+    const alpha = alphaData[index];
+    rgbData[index + 3] = alpha;
+    if (alpha === 0) {
+      rgbData[index] = 0;
+      rgbData[index + 1] = 0;
+      rgbData[index + 2] = 0;
+    }
+  }
+
+  outCtx.putImageData(rgbImage, 0, 0);
+  return output;
 }
 
 function upscaleCanvas(canvas, scale) {
@@ -3254,7 +3606,11 @@ function setCardStatus(item, text, className) {
 function updateUi() {
   const total = state.items.length;
   const completed = state.items.filter((item) => item.blob).length;
+  state.items.forEach((item) => {
+    item.deleteButton.disabled = state.isProcessing;
+  });
   els.emptyState.classList.toggle("is-hidden", total > 0);
+  els.mainWorkspace.classList.toggle("has-items", total > 0);
   const missingPixianCredentials = total > 0 && needsPixianCredentials() && !hasPixianCredentials();
   const missingKoukoutuCredentials = total > 0 && needsKoukoutuCredentials() && !hasKoukoutuCredentials();
   const missingApiCredentials = missingPixianCredentials || missingKoukoutuCredentials;
@@ -3265,6 +3621,7 @@ function updateUi() {
     els.modelSelect.value !== "koukoutu" || state.isProcessing || !hasKoukoutuCredentials();
   els.downloadButton.disabled = completed === 0 || state.isProcessing;
   els.clearButton.disabled = total === 0 || state.isProcessing;
+  els.uploadMoreButton.disabled = state.isProcessing;
   els.queueStatus.textContent = total ? `${total} 张图片` : "待上传";
   els.hintText.textContent = missingApiCredentials
     ? missingKoukoutuCredentials
@@ -3281,14 +3638,49 @@ function updateProgress(done, total) {
   els.progressBar.style.width = total ? `${Math.round((done / total) * 100)}%` : "0%";
 }
 
+function setWorkspaceDragging(isDragging) {
+  els.mainWorkspace.classList.toggle("is-dragging", isDragging);
+  els.dropZone.classList.toggle("is-dragging", isDragging && !state.items.length);
+}
+
 function clearQueue() {
   if (els.previewModal.open) els.previewModal.close();
-  for (const item of state.items) {
-    URL.revokeObjectURL(item.url);
-  }
+  if (els.editModal.open) els.editModal.close();
+  for (const item of state.items) cleanupQueueItem(item);
   state.items = [];
   els.imageGrid.replaceChildren();
   updateUi();
+}
+
+function removeQueueItem(item) {
+  if (state.isProcessing) return;
+  if (previewItem === item && els.previewModal.open) els.previewModal.close();
+  if (editItem === item && els.editModal.open) els.editModal.close();
+  cleanupQueueItem(item);
+  state.items = state.items.filter((candidate) => candidate !== item);
+  item.card.remove();
+  updateUi();
+}
+
+function cleanupQueueItem(item) {
+  if (!item) return;
+  if (item.url) {
+    URL.revokeObjectURL(item.url);
+    item.url = null;
+  }
+  if (item.bitmap && typeof item.bitmap.close === "function") item.bitmap.close();
+  item.bitmap = null;
+  item.file = null;
+  item.blob = null;
+  item.editorSubjectCanvas = null;
+  item.editorBackgroundColor = null;
+  if (item.original) item.original.removeAttribute("src");
+  if (item.resultCanvas) {
+    const ctx = item.resultCanvas.getContext("2d");
+    ctx?.clearRect(0, 0, item.resultCanvas.width, item.resultCanvas.height);
+    item.resultCanvas.width = 0;
+    item.resultCanvas.height = 0;
+  }
 }
 
 async function downloadAll() {

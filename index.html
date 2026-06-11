@@ -5,12 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>批量抠图 + 高清放大</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./styles.css?v=20260610-2" />
+    <link rel="stylesheet" href="./styles.css?v=20260611-1" />
   </head>
   <body>
     <main class="app-shell">
       <section class="workspace">
-        <aside class="panel tools-panel" aria-label="处理设置">
+        <aside class="panel tools-panel sidebar-panel" aria-label="处理设置">
           <div class="brand-row">
             <div>
               <p class="eyebrow">MADE IN 37</p>
@@ -18,15 +18,6 @@
             </div>
             <span class="status-pill" id="queueStatus">待上传</span>
           </div>
-
-          <label class="drop-zone" id="dropZone">
-            <input id="fileInput" type="file" accept="image/*" multiple />
-            <span class="drop-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" role="img"><path d="M12 3v12m0-12 4 4m-4-4-4 4M5 15v3a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-3"/></svg>
-            </span>
-            <span class="drop-title">拖入图片或点击上传</span>
-            <span class="drop-copy">支持 PNG、JPG、WEBP，可一次选择多张</span>
-          </label>
 
           <div class="control-group">
             <span class="control-label">处理模式</span>
@@ -47,7 +38,7 @@
           </div>
 
           <div class="control-grid">
-            <label class="field">
+            <label class="field" data-option="model">
               <span>抠图模型</span>
               <select id="modelSelect">
                 <option value="local-fast" selected>本地极速</option>
@@ -55,7 +46,7 @@
                 <option value="koukoutu">抠抠图</option>
               </select>
             </label>
-            <label class="field">
+            <label class="field" data-option="scale">
               <span>放大倍数</span>
               <select id="scaleSelect">
                 <option value="2">2x</option>
@@ -63,14 +54,14 @@
                 <option value="4">4x</option>
               </select>
             </label>
-            <label class="field">
+            <label class="field" data-option="upscale-provider">
               <span>放大方式</span>
               <select id="upscaleProviderSelect">
                 <option value="canvas-resize" selected>普通放大</option>
-                <option value="ai-enhance">AI 高清增强</option>
+                <option value="ai-enhance">AI 高清增强（实验）</option>
               </select>
             </label>
-            <label class="field">
+            <label class="field" data-option="edge-feather" hidden>
               <span>边缘柔化</span>
               <select id="featherSelect">
                 <option value="1">轻微</option>
@@ -78,7 +69,7 @@
                 <option value="4">更柔</option>
               </select>
             </label>
-            <label class="field">
+            <label class="field" data-option="edge-shrink" hidden>
               <span>边缘收缩</span>
               <select id="shrinkSelect">
                 <option value="0" selected>不收缩</option>
@@ -128,7 +119,7 @@
             <p class="api-status" id="koukoutuCreditStatus" aria-live="polite"></p>
           </div>
 
-          <div class="control-group">
+          <div class="control-group" data-option="tolerance">
             <label class="slider-row" for="toleranceRange">
               <span>背景容差</span>
               <output id="toleranceOutput">36</output>
@@ -137,11 +128,11 @@
           </div>
 
           <div class="toggle-list">
-            <label class="toggle">
+            <label class="toggle" data-option="auto-crop" hidden>
               <input id="trimToggle" type="checkbox" />
               <span>自动裁掉透明边</span>
             </label>
-            <label class="toggle">
+            <label class="toggle" data-option="sharpen">
               <input id="sharpenToggle" type="checkbox" checked />
               <span>放大后轻微锐化</span>
             </label>
@@ -163,33 +154,36 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
             </button>
           </div>
-        </aside>
 
-        <section class="stage" aria-label="图片列表">
-          <section class="free-cutout-links" aria-label="免费抠图链接">
+          <section class="free-cutout-links free-links-card sidebar-tools" aria-label="免费抠图链接">
             <h3>免费抠图链接</h3>
-            <div class="free-link-buttons">
-              <a href="https://www.koukoutu.com/removebgtool/all" target="_blank" rel="noreferrer" aria-label="打开抠抠图免费抠图">
+            <div class="free-link-buttons free-links-grid">
+              <a class="free-link-button" href="https://www.koukoutu.com/removebgtool/all" target="_blank" rel="noreferrer" title="抠抠图" aria-label="打开抠抠图免费抠图">
                 <img src="https://www.koukoutu.com/favicon.ico" alt="" />
-                <span>抠抠图</span>
+                <span class="label">抠抠图</span>
               </a>
-              <a href="https://pixian.ai/" target="_blank" rel="noreferrer" aria-label="打开 Pixian.ai">
+              <a class="free-link-button" href="https://pixian.ai/" target="_blank" rel="noreferrer" title="Pixian.ai" aria-label="打开 Pixian.ai">
                 <img src="https://dq2gn5p12glyq.cloudfront.net/p/assets/m/favicons/pixian/favicon-32_46dab9b5e2e7d199a3e92e0d55dbd817.png" alt="" />
-                <span>Pixian.ai</span>
+                <span class="label">Pixian.ai</span>
               </a>
-              <a href="https://www.photoroom.com/tools/background-remover" target="_blank" rel="noreferrer" aria-label="打开 PhotoRoom 免费抠图">
+              <a class="free-link-button" href="https://www.photoroom.com/tools/background-remover" target="_blank" rel="noreferrer" title="PhotoRoom" aria-label="打开 PhotoRoom 免费抠图">
                 <img src="https://www.photoroom.com/favicon.ico" alt="" />
-                <span>PhotoRoom</span>
+                <span class="label">PhotoRoom</span>
               </a>
             </div>
           </section>
+        </aside>
 
-          <section class="compress-panel" aria-label="图片和 GIF 压缩">
-            <div class="compress-head">
+        <section class="stage main-panel" aria-label="图片列表">
+          <section class="compress-panel top-compress-dock is-collapsed" aria-label="图片和 GIF 压缩">
+            <button class="compress-head" id="compressToggleButton" type="button" aria-expanded="false" aria-controls="compressBody">
               <h3>图片 / GIF 压缩</h3>
-              <span id="compressStatus">待选择</span>
-            </div>
-            <div class="compress-body">
+              <span class="compress-head-meta">
+                <span id="compressStatus">待选择</span>
+                <svg class="compress-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+              </span>
+            </button>
+            <div class="compress-body" id="compressBody" hidden>
               <div class="compress-file-column">
                 <label class="compress-upload">
                   <input id="compressFileInput" type="file" accept="image/*,.gif" multiple />
@@ -243,8 +237,13 @@
                       <option value="image/jpeg">JPG</option>
                     </select>
                   </label>
-                  <button class="small-button" id="compressButton" type="button" disabled>开始压缩</button>
-                  <button class="small-button" id="compressDownloadButton" type="button" disabled>下载</button>
+                  <button class="compress-start-button" id="compressButton" type="button" disabled>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.6 5.2L19 10l-5.4 1.8L12 17l-1.6-5.2L5 10l5.4-1.8L12 3Z"/><path d="m19 16 .8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z"/></svg>
+                    <span>开始压缩</span>
+                  </button>
+                  <button class="icon-button compress-download-button" id="compressDownloadButton" type="button" disabled title="下载" aria-label="下载">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10m0 0 4-4m-4 4-4-4M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"/></svg>
+                  </button>
                 </div>
               </div>
             </div>
@@ -255,22 +254,30 @@
               <h2>任务列表</h2>
               <p id="hintText">上传图片后会在这里显示原图与处理结果。</p>
             </div>
-            <div class="progress-wrap" aria-live="polite">
-              <span id="progressText">0 / 0</span>
-              <div class="progress-track"><span id="progressBar"></span></div>
+            <div class="stage-header-actions">
+              <button class="upload-more-button workspace-upload-button" id="uploadMoreButton" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0-12 4 4m-4-4-4 4M5 15v3a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-3"/></svg>
+                <span>上传图片</span>
+              </button>
+              <div class="progress-wrap" aria-live="polite" hidden>
+                <span id="progressText">0 / 0</span>
+                <div class="progress-track"><span id="progressBar"></span></div>
+              </div>
             </div>
           </div>
 
-          <div class="empty-state" id="emptyState">
-            <div class="sample-stack" aria-hidden="true">
-              <span></span>
-              <span></span>
-              <span></span>
-            </div>
-            <p>把商品图、证件照或头像拖进来，批量生成透明 PNG。</p>
-          </div>
+          <section class="main-workspace" id="mainWorkspace" aria-label="图片上传与任务结果">
+            <label class="drop-zone workspace-dropzone" id="dropZone">
+              <input id="fileInput" type="file" accept="image/*" multiple />
+              <span class="drop-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" role="img"><path d="M12 3v12m0-12 4 4m-4-4-4 4M5 15v3a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-3"/></svg>
+              </span>
+              <span class="drop-title">拖入图片或点击上传</span>
+              <span class="drop-copy">支持 PNG、JPG、WEBP，可一次选择多张</span>
+            </label>
 
-          <div class="image-grid" id="imageGrid"></div>
+            <div class="image-grid task-grid" id="imageGrid"></div>
+          </section>
         </section>
       </section>
     </main>
@@ -294,6 +301,10 @@
             <span class="file-meta"></span>
           </div>
           <div class="card-buttons">
+            <button class="icon-button delete-button task-delete-button" type="button" title="删除" aria-label="删除">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
+              <span class="label">删除</span>
+            </button>
             <button class="small-button edit-button" type="button" disabled>编辑</button>
             <button class="small-button download-button" type="button" disabled>下载</button>
           </div>
@@ -309,9 +320,11 @@
             <p id="previewMeta"></p>
           </div>
           <div class="preview-actions">
-            <button class="small-button" id="previewCropButton" type="button" hidden>裁剪大小</button>
-            <button class="small-button" id="previewApplyCropButton" type="button" hidden>应用裁剪</button>
-            <button class="small-button" id="previewCancelCropButton" type="button" hidden>取消裁剪</button>
+            <span class="preview-crop-actions" id="previewCropActions" hidden>
+              <button class="small-button" id="previewCropButton" type="button" hidden>裁剪大小</button>
+              <button class="small-button" id="previewApplyCropButton" type="button" hidden>应用裁剪</button>
+              <button class="small-button" id="previewCancelCropButton" type="button" hidden>取消裁剪</button>
+            </span>
             <button class="small-button" id="previewDownloadButton" type="button">下载</button>
             <button class="icon-button" id="previewCloseButton" type="button" title="关闭">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -408,6 +421,6 @@
       </div>
     </dialog>
 
-    <script src="./app.js?v=20260610-2"></script>
+    <script src="./app.js?v=20260611-1"></script>
   </body>
 </html>
