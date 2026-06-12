@@ -80,6 +80,10 @@ const els = {
   previewCancelCropButton: document.querySelector("#previewCancelCropButton"),
   previewCropOverlay: document.querySelector("#previewCropOverlay"),
   previewCloseButton: document.querySelector("#previewCloseButton"),
+  errorModal: document.querySelector("#errorModal"),
+  errorSummary: document.querySelector("#errorSummary"),
+  errorJson: document.querySelector("#errorJson"),
+  errorCloseButton: document.querySelector("#errorCloseButton"),
   editModal: document.querySelector("#editModal"),
   editBackgroundCanvas: document.querySelector("#editBackgroundCanvas"),
   editCanvas: document.querySelector("#editCanvas"),
@@ -359,6 +363,10 @@ els.previewModal.addEventListener("click", (event) => {
   if (event.target === els.previewModal) els.previewModal.close();
 });
 els.previewModal.addEventListener("close", clearPreviewModal);
+els.errorCloseButton.addEventListener("click", () => els.errorModal.close());
+els.errorModal.addEventListener("click", (event) => {
+  if (event.target === els.errorModal) els.errorModal.close();
+});
 els.editToleranceRange.addEventListener("input", () => {
   els.editToleranceOutput.value = els.editToleranceRange.value;
 });
@@ -1272,6 +1280,7 @@ function createItem(file, url, bitmap) {
   const deleteButton = fragment.querySelector(".delete-button");
   const editButton = fragment.querySelector(".edit-button");
   const downloadButton = fragment.querySelector(".download-button");
+  const fileError = fragment.querySelector(".file-error");
 
   original.src = url;
   original.alt = file.name;
@@ -1301,6 +1310,8 @@ function createItem(file, url, bitmap) {
     editButton,
     downloadButton,
     durationEl: fileDuration,
+    errorEl: fileError,
+    errorInfo: null,
     blob: null,
     editorSubjectCanvas: null,
     editorBackgroundColor: null,
@@ -1322,10 +1333,27 @@ function createItem(file, url, bitmap) {
     if (item.blob) downloadBlob(item.blob, item.outputName);
   });
   editButton.addEventListener("click", () => openEditor(item));
-  resultCanvas.addEventListener("click", () => openPreview(item, { mode: "result" }));
+  card.addEventListener("click", (event) => {
+    if (!item.errorInfo) return;
+    const interactive = event.target.closest("button, a, input, select, textarea, label, .custom-select");
+    if (interactive && !event.target.closest(".result-canvas, .file-error, .card-status")) return;
+    openTaskErrorDetails(item);
+  });
+  resultCanvas.addEventListener("click", (event) => {
+    if (item.errorInfo) {
+      event.stopPropagation();
+      openTaskErrorDetails(item);
+      return;
+    }
+    openPreview(item, { mode: "result" });
+  });
   resultCanvas.addEventListener("keydown", (event) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
+      if (item.errorInfo) {
+        openTaskErrorDetails(item);
+        return;
+      }
       openPreview(item, { mode: "result" });
     }
   });
@@ -1345,6 +1373,7 @@ async function processQueue() {
     item.cancelRequested = false;
     item.abortController = new AbortController();
     item.runninghubTaskId = "";
+    clearTaskError(item);
     resetTaskTiming(item);
     setItemCancelable(item, true);
     item.deleteButton.disabled = true;
@@ -1404,7 +1433,8 @@ async function processQueue() {
       }
       resetResultCanvas(item);
       item.deleteButton.disabled = false;
-      setCardStatus(item, getTaskFailureStatusText(options, error), "is-error");
+      setTaskError(item, options, error);
+      setCardStatus(item, "处理失败", "is-error");
       finishTaskTiming(item, "error");
     }
     item.abortController = null;
@@ -4119,6 +4149,7 @@ async function requestRunningHubRemoveBg(
       stage: errorInfo.stage || "worker_response",
       status: response.status,
       detail: errorInfo.detail,
+      taskId: errorInfo.taskId,
     });
   }
 
@@ -4415,6 +4446,7 @@ async function requestRunningHubUpscale(blob, { scale, preserveAlpha, inputWidth
       stage: errorInfo.stage || "worker_response",
       status: response.status,
       detail: errorInfo.detail,
+      taskId: errorInfo.taskId,
     });
   }
 
@@ -4430,6 +4462,7 @@ async function readRunningHubWorkerError(response) {
         stage: data.stage,
         message: data.message || `Worker 返回非 200：HTTP ${response.status}`,
         detail: data.detail || data.error || text,
+        taskId: data.taskId || data.task_id || data.raw?.taskId || data.raw?.task_id || "",
       };
     }
   } catch (error) {
@@ -4450,6 +4483,7 @@ function createRunningHubProviderError(message, { stage, status, detail, taskId 
   if (detail) parts.push(`detail=${detail}`);
   if (taskId) parts.push(`taskId=${taskId}`);
   const error = new Error(parts.join(" | "));
+  error.displayMessage = message;
   error.isRunningHubProviderError = true;
   error.stage = stage;
   error.status = status;
@@ -4638,6 +4672,82 @@ function setCardStatus(item, text, className) {
   item.status.title = text;
 }
 
+function clearTaskError(item) {
+  item.errorInfo = null;
+  item.card.classList.remove("has-error");
+  item.resultCanvas.title = "处理完成后点击放大预览";
+  item.resultCanvas.removeAttribute("aria-describedby");
+  if (!item.errorEl) return;
+  item.errorEl.hidden = true;
+  item.errorEl.textContent = "";
+  item.errorEl.removeAttribute("title");
+}
+
+function setTaskError(item, options, error) {
+  const info = buildTaskErrorInfo(item, options, error);
+  item.errorInfo = info;
+  item.card.classList.add("has-error");
+  item.resultCanvas.title = "查看失败详情";
+  item.status.title = "点击查看失败详情";
+  if (item.errorEl) {
+    const lines = [`失败原因：${info.message}`];
+    if (info.detail) lines.push(`详情：${info.detail}`);
+    if (info.taskId) lines.push(`taskId: ${info.taskId}`);
+    item.errorEl.textContent = lines.join("\n");
+    item.errorEl.title = JSON.stringify(info, null, 2);
+    item.errorEl.hidden = false;
+  }
+  if (info.taskId) item.runninghubTaskId = info.taskId;
+}
+
+function buildTaskErrorInfo(item, options, error) {
+  const baseMessage = getTaskErrorMessage(options, error);
+  const detail = cleanErrorText(error?.detail || "");
+  const taskId = cleanErrorText(error?.runninghubTaskId || item.runninghubTaskId || extractTaskIdFromText(`${error?.message || ""} ${detail}`));
+  return {
+    stage: cleanErrorText(error?.stage || ""),
+    message: baseMessage,
+    detail,
+    taskId,
+    status: error?.status || "",
+  };
+}
+
+function getTaskErrorMessage(options, error) {
+  const raw = cleanErrorText(error?.displayMessage || getProcessingErrorText(error));
+  const message = raw.split(" | stage=")[0].trim() || "处理失败";
+  if (usesNamedRunningHubRemoveBg(options)) return `${getRemoveBgStatusLabel(options)}失败：${message}`;
+  if (usesNamedRunningHubUpscale(options)) return `${getUpscaleStatusLabel(options)}失败：${message}`;
+  return message;
+}
+
+function cleanErrorText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function extractTaskIdFromText(text) {
+  const match = String(text || "").match(/taskId\s*[:=]\s*([^\s|,，]+)/i);
+  return match ? match[1] : "";
+}
+
+function openTaskErrorDetails(item) {
+  if (!item?.errorInfo) return;
+  const payload = {
+    stage: item.errorInfo.stage || "",
+    message: item.errorInfo.message || "处理失败",
+    detail: item.errorInfo.detail || "",
+    taskId: item.errorInfo.taskId || item.runninghubTaskId || "",
+  };
+  els.errorSummary.textContent = payload.message;
+  els.errorSummary.title = payload.message;
+  els.errorJson.textContent = JSON.stringify(payload, null, 2);
+  if (typeof els.errorModal.showModal === "function") {
+    els.errorModal.showModal();
+  } else {
+    els.errorModal.setAttribute("open", "");
+  }
+}
+
 function getTaskWorkingStatusText(options) {
   if (usesNamedRunningHubRemoveBg(options)) return `${getRemoveBgStatusLabel(options)}处理中...`;
   if (usesNamedRunningHubUpscale(options)) return `${getUpscaleStatusLabel(options)}处理中...`;
@@ -4658,7 +4768,7 @@ function getTaskFailureStatusText(options, error) {
 }
 
 function usesNamedRunningHubRemoveBg(options) {
-  return options.mode !== "upscale" && options.removeBgProvider === "runninghub";
+  return options.mode !== "upscale" && ["runninghub", "runninghub-ai-app"].includes(options.removeBgProvider);
 }
 
 function usesNamedRunningHubUpscale(options) {

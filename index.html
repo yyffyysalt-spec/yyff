@@ -319,6 +319,7 @@
           <div>
             <strong class="file-name"></strong>
             <span class="file-meta"></span>
+            <div class="file-error" hidden></div>
             <span class="file-duration" aria-live="polite"></span>
           </div>
           <div class="card-buttons">
@@ -386,6 +387,23 @@
             <button class="crop-handle crop-handle-w" type="button" data-crop-handle="w" aria-label="裁剪左边"></button>
           </div>
         </div>
+      </div>
+    </dialog>
+
+    <dialog class="error-modal" id="errorModal" aria-labelledby="errorTitle">
+      <div class="error-panel">
+        <div class="preview-toolbar">
+          <div>
+            <h2 id="errorTitle">处理失败详情</h2>
+            <p id="errorSummary"></p>
+          </div>
+          <div class="preview-actions">
+            <button class="icon-button" id="errorCloseButton" type="button" title="关闭" aria-label="关闭">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+        </div>
+        <pre class="error-json" id="errorJson"></pre>
       </div>
     </dialog>
 
