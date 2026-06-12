@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>批量抠图 + 高清放大</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./styles.css?v=20260611-7" />
+    <link rel="stylesheet" href="./styles.css?v=20260612-1" />
   </head>
   <body>
     <main class="app-shell">
@@ -42,7 +42,6 @@
               <span>抠图模型</span>
               <select id="modelSelect">
                 <option value="local-fast">本地极速</option>
-                <option value="pixian-ai">Pixian.ai</option>
                 <option value="koukoutu">抠抠图</option>
               </select>
             </label>
@@ -300,6 +299,7 @@
           <div>
             <strong class="file-name"></strong>
             <span class="file-meta"></span>
+            <span class="file-duration" aria-live="polite"></span>
           </div>
           <div class="card-buttons">
             <button class="icon-button cancel-button task-cancel-button" type="button" title="取消生成" aria-label="取消生成" hidden disabled>
@@ -442,7 +442,7 @@
       </div>
     </dialog>
 
-    <script src="./config.js?v=20260611-7"></script>
-    <script src="./app.js?v=20260611-7"></script>
+    <script src="./config.js?v=20260612-1"></script>
+    <script src="./app.js?v=20260612-1"></script>
   </body>
 </html>

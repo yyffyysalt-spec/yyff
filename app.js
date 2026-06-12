@@ -144,12 +144,6 @@ const BUILT_IN_REMOVE_BG_MODELS = [
     default: false,
   },
   {
-    id: "pixian-ai",
-    label: "Pixian.ai",
-    provider: "pixian",
-    default: false,
-  },
-  {
     id: "koukoutu",
     label: "抠抠图",
     provider: "koukoutu",
@@ -203,6 +197,7 @@ let previewOriginalUrl = null;
 let previewItem = null;
 let previewMode = "result";
 let previewViewMode = "result";
+let compareLayoutFrame = 0;
 let isPreviewCropping = false;
 let previewCropRect = null;
 let previewCropBounds = null;
@@ -234,6 +229,8 @@ let compressionPreviewBlob = null;
 let isCompressionPanelExpanded = false;
 let gifDecoderModulePromise = null;
 let gifEncoderModulePromise = null;
+let taskDurationTimer = null;
+const customSelects = new Map();
 
 initializeRemoveBgModelOptions();
 initializeUpscaleProviderOptions();
@@ -257,6 +254,8 @@ els.compressFileInput.addEventListener("change", (event) => {
   els.compressFileInput.value = "";
 });
 els.compressFormatSelect.addEventListener("change", scheduleCompressionEstimate);
+els.scaleSelect.addEventListener("change", () => updateSelectTitle(els.scaleSelect));
+els.compressFormatSelect.addEventListener("change", () => updateSelectTitle(els.compressFormatSelect));
 els.compressButton.addEventListener("click", compressSelectedFiles);
 els.compressDownloadButton.addEventListener("click", downloadCompressedFiles);
 els.compressPreviewCard.addEventListener("click", openCompressionPreview);
@@ -297,6 +296,8 @@ updateOptionVisibility();
 updateApiControls();
 setCompressionPanelExpanded(false);
 updateCompressionQualityControls();
+initializeCustomSelects();
+syncCustomSelects();
 
 els.fileInput.addEventListener("change", (event) => {
   addFiles([...event.target.files]);
@@ -338,6 +339,8 @@ els.previewDownloadButton.addEventListener("click", () => {
 els.previewResultModeButton.addEventListener("click", () => setPreviewViewMode("result"));
 els.previewCompareModeButton.addEventListener("click", () => setPreviewViewMode("compare"));
 els.compareSlider.addEventListener("input", updateComparePosition);
+document.addEventListener("click", handleCustomSelectDocumentClick);
+document.addEventListener("keydown", handleCustomSelectDocumentKeydown);
 els.previewCropButton.addEventListener("click", startPreviewCrop);
 els.previewCancelCropButton.addEventListener("click", stopPreviewCrop);
 els.previewApplyCropButton.addEventListener("click", applyPreviewCrop);
@@ -386,6 +389,7 @@ document.addEventListener("keydown", handleEditUndoShortcut);
 document.addEventListener("keydown", handleEditorDeleteKeydown, true);
 window.addEventListener("resize", () => {
   if (els.editModal.open) fitEditCanvasToView();
+  if (els.previewModal.open && previewViewMode === "compare") scheduleCompareLayout();
 });
 els.editModal.addEventListener("click", (event) => {
   if (event.target === els.editModal) els.editModal.close();
@@ -403,7 +407,10 @@ function setCompressionFiles(files) {
   compressorState.results = [];
   compressorState.estimates = {};
   compressorState.estimateRunId += 1;
-  if (compressorState.files.some(isGifFile)) els.compressFormatSelect.value = "image/gif";
+  if (compressorState.files.some(isGifFile)) {
+    els.compressFormatSelect.value = "image/gif";
+    updateSelectTitle(els.compressFormatSelect);
+  }
   clearCompressionPreviewCard();
   updateCompressionUi();
   scheduleCompressionEstimate();
@@ -1268,8 +1275,10 @@ function createItem(file, url, bitmap) {
   fileName.textContent = file.name;
   fileName.title = file.name;
   fragment.querySelector(".file-meta").textContent = `${bitmap.width} x ${bitmap.height} · ${formatBytes(file.size)}`;
+  const fileDuration = fragment.querySelector(".file-duration");
   fragment.querySelector(".processed-figure").classList.toggle("checker", els.checkerToggle.checked);
 
+  const createdAt = Date.now();
   const item = {
     id: crypto.randomUUID(),
     file,
@@ -1283,11 +1292,17 @@ function createItem(file, url, bitmap) {
     deleteButton,
     editButton,
     downloadButton,
+    durationEl: fileDuration,
     blob: null,
     editorSubjectCanvas: null,
     editorBackgroundColor: null,
     cancelRequested: false,
     abortController: null,
+    createdAt,
+    startedAt: null,
+    finishedAt: null,
+    durationMs: null,
+    durationState: "",
     outputName: makeOutputName(file.name),
   };
 
@@ -1320,6 +1335,7 @@ async function processQueue() {
     item.editorBackgroundColor = null;
     item.cancelRequested = false;
     item.abortController = new AbortController();
+    resetTaskTiming(item);
     setItemCancelable(item, true);
     item.deleteButton.disabled = true;
     item.editButton.disabled = true;
@@ -1327,6 +1343,7 @@ async function processQueue() {
     resetResultCanvas(item);
     setCardStatus(item, "等待处理", "");
   }
+  startTaskDurationTimer();
   updateUi();
 
   const options = readOptions();
@@ -1334,12 +1351,14 @@ async function processQueue() {
   for (const item of state.items) {
     if (item.cancelRequested) {
       setCardStatus(item, "已取消", "is-canceled");
+      finishTaskTiming(item, "canceled");
       setItemCancelable(item, false);
       item.deleteButton.disabled = false;
       done += 1;
       updateProgress(done, state.items.length);
       continue;
     }
+    startTaskTiming(item);
     setCardStatus(item, getTaskWorkingStatusText(options), "is-working");
     try {
       await nextFrame();
@@ -1353,6 +1372,7 @@ async function processQueue() {
       item.downloadButton.disabled = false;
       item.resultCanvas.classList.add("is-previewable");
       setCardStatus(item, getTaskDoneStatusText(options), "is-done");
+      finishTaskTiming(item, "done");
     } catch (error) {
       setItemCancelable(item, false);
       item.abortController = null;
@@ -1362,6 +1382,7 @@ async function processQueue() {
         item.editButton.disabled = true;
         item.downloadButton.disabled = true;
         setCardStatus(item, "已取消", "is-canceled");
+        finishTaskTiming(item, "canceled");
         done += 1;
         updateProgress(done, state.items.length);
         continue;
@@ -1374,6 +1395,7 @@ async function processQueue() {
       resetResultCanvas(item);
       item.deleteButton.disabled = false;
       setCardStatus(item, getTaskFailureStatusText(options, error), "is-error");
+      finishTaskTiming(item, "error");
     }
     item.abortController = null;
     done += 1;
@@ -1381,6 +1403,7 @@ async function processQueue() {
   }
 
   state.isProcessing = false;
+  stopTaskDurationTimer();
   updateUi();
 }
 
@@ -1433,6 +1456,7 @@ function clearPreviewModal() {
   els.previewImage.removeAttribute("src");
   els.compareOriginalImage.removeAttribute("src");
   els.compareResultImage.removeAttribute("src");
+  els.previewCompareView.removeAttribute("style");
   els.previewCompareView.hidden = true;
   els.previewImage.hidden = false;
   els.previewModeToggle.hidden = true;
@@ -1449,15 +1473,45 @@ function setPreviewViewMode(mode) {
     els.compareOriginalImage.src = previewOriginalUrl;
     els.compareResultImage.src = previewUrl;
     els.compareSlider.value = "50";
-    updateComparePosition();
+    els.compareOriginalImage.onload = scheduleCompareLayout;
+    els.compareResultImage.onload = scheduleCompareLayout;
+    scheduleCompareLayout();
   } else {
     els.previewImage.src = previewMode === "original" ? previewOriginalUrl : previewUrl;
   }
 }
 
 function updateComparePosition() {
-  const value = Number(els.compareSlider.value || 50);
-  els.previewCompareView.style.setProperty("--compare-position", `${value}%`);
+  updateCompareLayout();
+}
+
+function scheduleCompareLayout() {
+  if (compareLayoutFrame) cancelAnimationFrame(compareLayoutFrame);
+  compareLayoutFrame = requestAnimationFrame(() => {
+    compareLayoutFrame = 0;
+    updateCompareLayout();
+  });
+}
+
+function updateCompareLayout() {
+  if (!previewItem || previewViewMode !== "compare" || els.previewCompareView.hidden) return;
+  const hostWidth = els.previewCompareView.clientWidth;
+  const hostHeight = els.previewCompareView.clientHeight;
+  const imageWidth = previewItem.bitmap?.width || els.compareOriginalImage.naturalWidth || previewItem.resultCanvas?.width || 1;
+  const imageHeight = previewItem.bitmap?.height || els.compareOriginalImage.naturalHeight || previewItem.resultCanvas?.height || 1;
+  if (!hostWidth || !hostHeight || !imageWidth || !imageHeight) return;
+  const scale = Math.min(hostWidth / imageWidth, hostHeight / imageHeight);
+  const displayWidth = Math.max(1, Math.round(imageWidth * scale));
+  const displayHeight = Math.max(1, Math.round(imageHeight * scale));
+  const displayX = Math.round((hostWidth - displayWidth) / 2);
+  const displayY = Math.round((hostHeight - displayHeight) / 2);
+  const ratio = Math.min(1, Math.max(0, Number(els.compareSlider.value || 50) / 100));
+  els.previewCompareView.style.setProperty("--compare-x", `${displayX}px`);
+  els.previewCompareView.style.setProperty("--compare-y", `${displayY}px`);
+  els.previewCompareView.style.setProperty("--compare-width", `${displayWidth}px`);
+  els.previewCompareView.style.setProperty("--compare-height", `${displayHeight}px`);
+  els.previewCompareView.style.setProperty("--compare-clip-left", `${ratio * 100}%`);
+  els.previewCompareView.style.setProperty("--compare-divider-left", `${displayX + displayWidth * ratio}px`);
 }
 
 function setPreviewCropControls(canCrop) {
@@ -2645,6 +2699,7 @@ function initializeRemoveBgModelOptions() {
 
   els.modelSelect.value = getDefaultRemoveBgChoice().id;
   updateSelectTitle(els.modelSelect);
+  syncCustomSelects();
 }
 
 function getRemoveBgChoices() {
@@ -2652,7 +2707,7 @@ function getRemoveBgChoices() {
 }
 
 function getDefaultRemoveBgChoice() {
-  return REMOVE_BG_WORKFLOWS.find((workflow) => workflow.default) || getRemoveBgChoice("local-fast");
+  return getRemoveBgChoice("local-fast");
 }
 
 function getSelectedRemoveBgChoice() {
@@ -2704,11 +2759,171 @@ function initializeUpscaleProviderOptions() {
   const defaultChoice = getDefaultUpscaleChoice();
   els.upscaleProviderSelect.value = defaultChoice.id;
   updateSelectTitle(els.upscaleProviderSelect);
+  syncCustomSelects();
 }
 
 function updateSelectTitle(select) {
   if (!select) return;
   select.title = select.selectedOptions?.[0]?.textContent || "";
+  refreshCustomSelect(select);
+}
+
+function initializeCustomSelects() {
+  document.querySelectorAll("select").forEach((select) => {
+    if (customSelects.has(select)) return;
+    const shell = document.createElement("div");
+    shell.className = "custom-select";
+    const button = document.createElement("button");
+    button.className = "custom-select-button";
+    button.type = "button";
+    button.setAttribute("aria-haspopup", "listbox");
+    button.setAttribute("aria-expanded", "false");
+    const label = document.createElement("span");
+    label.className = "custom-select-label";
+    const arrow = document.createElement("span");
+    arrow.className = "custom-select-arrow";
+    arrow.setAttribute("aria-hidden", "true");
+    arrow.textContent = "⌄";
+    const menu = document.createElement("div");
+    menu.className = "custom-select-menu";
+    menu.setAttribute("role", "listbox");
+    menu.hidden = true;
+
+    button.append(label, arrow);
+    shell.append(button, menu);
+    select.classList.add("native-select-hidden");
+    select.insertAdjacentElement("afterend", shell);
+
+    customSelects.set(select, { shell, button, label, menu, activeIndex: -1 });
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      toggleCustomSelect(select);
+    });
+    button.addEventListener("keydown", (event) => handleCustomSelectKeydown(event, select));
+    select.addEventListener("change", () => refreshCustomSelect(select));
+    refreshCustomSelect(select);
+  });
+}
+
+function syncCustomSelects() {
+  customSelects.forEach((_entry, select) => refreshCustomSelect(select));
+}
+
+function refreshCustomSelect(select) {
+  const entry = customSelects.get(select);
+  if (!entry) return;
+  const selectedOption = select.selectedOptions?.[0] || select.options[select.selectedIndex] || select.options[0];
+  const text = selectedOption?.textContent || "";
+  entry.label.textContent = text;
+  entry.button.title = text;
+  entry.button.disabled = select.disabled;
+  entry.button.setAttribute("aria-disabled", select.disabled ? "true" : "false");
+  entry.menu.innerHTML = "";
+  [...select.options].forEach((option, index) => {
+    const optionButton = document.createElement("button");
+    optionButton.type = "button";
+    optionButton.className = "custom-select-option";
+    optionButton.dataset.value = option.value;
+    optionButton.dataset.index = String(index);
+    optionButton.setAttribute("role", "option");
+    optionButton.setAttribute("aria-selected", option.selected ? "true" : "false");
+    optionButton.title = option.title || option.textContent;
+    optionButton.innerHTML = `<span class="custom-select-check" aria-hidden="true">✓</span><span class="custom-select-option-label"></span>`;
+    optionButton.querySelector(".custom-select-option-label").textContent = option.textContent;
+    optionButton.addEventListener("click", () => selectCustomOption(select, option.value));
+    entry.menu.append(optionButton);
+  });
+  entry.activeIndex = Math.max(0, select.selectedIndex);
+}
+
+function toggleCustomSelect(select) {
+  const entry = customSelects.get(select);
+  if (!entry || select.disabled) return;
+  if (entry.menu.hidden) openCustomSelect(select);
+  else closeCustomSelect(select);
+}
+
+function openCustomSelect(select) {
+  const entry = customSelects.get(select);
+  if (!entry || select.disabled) return;
+  closeAllCustomSelects(select);
+  refreshCustomSelect(select);
+  entry.menu.hidden = false;
+  entry.shell.classList.add("is-open");
+  entry.button.setAttribute("aria-expanded", "true");
+  focusCustomSelectOption(select, select.selectedIndex >= 0 ? select.selectedIndex : 0);
+}
+
+function closeCustomSelect(select) {
+  const entry = customSelects.get(select);
+  if (!entry) return;
+  entry.menu.hidden = true;
+  entry.shell.classList.remove("is-open");
+  entry.button.setAttribute("aria-expanded", "false");
+}
+
+function closeAllCustomSelects(exceptSelect = null) {
+  customSelects.forEach((_entry, select) => {
+    if (select !== exceptSelect) closeCustomSelect(select);
+  });
+}
+
+function selectCustomOption(select, value) {
+  const previous = select.value;
+  select.value = value;
+  closeCustomSelect(select);
+  updateSelectTitle(select);
+  if (previous !== value) {
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  customSelects.get(select)?.button.focus();
+}
+
+function handleCustomSelectKeydown(event, select) {
+  const entry = customSelects.get(select);
+  if (!entry) return;
+  const isOpen = !entry.menu.hidden;
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    if (!isOpen) openCustomSelect(select);
+    else {
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      focusCustomSelectOption(select, entry.activeIndex + direction);
+    }
+  } else if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    if (!isOpen) openCustomSelect(select);
+    else {
+      const option = select.options[entry.activeIndex];
+      if (option) selectCustomOption(select, option.value);
+    }
+  } else if (event.key === "Escape") {
+    if (isOpen) {
+      event.preventDefault();
+      closeCustomSelect(select);
+    }
+  }
+}
+
+function focusCustomSelectOption(select, index) {
+  const entry = customSelects.get(select);
+  if (!entry || !select.options.length) return;
+  const nextIndex = Math.max(0, Math.min(select.options.length - 1, index));
+  entry.activeIndex = nextIndex;
+  [...entry.menu.querySelectorAll(".custom-select-option")].forEach((button, buttonIndex) => {
+    button.classList.toggle("is-active", buttonIndex === nextIndex);
+    if (buttonIndex === nextIndex) button.scrollIntoView({ block: "nearest" });
+  });
+}
+
+function handleCustomSelectDocumentClick(event) {
+  if (![...customSelects.values()].some((entry) => entry.shell.contains(event.target))) {
+    closeAllCustomSelects();
+  }
+}
+
+function handleCustomSelectDocumentKeydown(event) {
+  if (event.key === "Escape") closeAllCustomSelects();
 }
 
 function getUpscaleChoices() {
@@ -4289,6 +4504,69 @@ function updateProgress(done, total) {
   els.progressBar.style.width = total ? `${Math.round((done / total) * 100)}%` : "0%";
 }
 
+function resetTaskTiming(item) {
+  item.startedAt = null;
+  item.finishedAt = null;
+  item.durationMs = null;
+  item.durationState = "";
+  updateTaskDurationDisplay(item);
+}
+
+function startTaskTiming(item) {
+  item.startedAt = Date.now();
+  item.finishedAt = null;
+  item.durationMs = null;
+  item.durationState = "working";
+  updateTaskDurationDisplay(item);
+}
+
+function finishTaskTiming(item, stateName) {
+  if (!item.startedAt) item.startedAt = Date.now();
+  item.finishedAt = Date.now();
+  item.durationMs = Math.max(0, item.finishedAt - item.startedAt);
+  item.durationState = stateName;
+  updateTaskDurationDisplay(item);
+}
+
+function startTaskDurationTimer() {
+  stopTaskDurationTimer();
+  taskDurationTimer = window.setInterval(() => {
+    state.items.forEach((item) => {
+      if (item.startedAt && !item.finishedAt) updateTaskDurationDisplay(item);
+    });
+  }, 1000);
+}
+
+function stopTaskDurationTimer() {
+  if (!taskDurationTimer) return;
+  window.clearInterval(taskDurationTimer);
+  taskDurationTimer = null;
+}
+
+function updateTaskDurationDisplay(item) {
+  if (!item?.durationEl) return;
+  if (!item.startedAt) {
+    item.durationEl.textContent = "";
+    return;
+  }
+  const elapsed = item.durationMs ?? Math.max(0, Date.now() - item.startedAt);
+  const text = formatDuration(elapsed);
+  if (item.durationState === "done") item.durationEl.textContent = `耗时 ${text}`;
+  else if (item.durationState === "error") item.durationEl.textContent = `已失败 · 耗时 ${text}`;
+  else if (item.durationState === "canceled") item.durationEl.textContent = `已取消 · 已用时 ${text}`;
+  else item.durationEl.textContent = `已用时 ${text}`;
+}
+
+function formatDuration(milliseconds) {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours) return `${hours}h ${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`;
+  if (minutes) return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+  return `${seconds}s`;
+}
+
 function setWorkspaceDragging(isDragging) {
   els.mainWorkspace.classList.toggle("is-dragging", isDragging);
   els.dropZone.classList.toggle("is-dragging", isDragging && !state.items.length);
@@ -4297,6 +4575,7 @@ function setWorkspaceDragging(isDragging) {
 function clearQueue() {
   if (els.previewModal.open) els.previewModal.close();
   if (els.editModal.open) els.editModal.close();
+  stopTaskDurationTimer();
   for (const item of state.items) cleanupQueueItem(item);
   state.items = [];
   els.imageGrid.replaceChildren();
@@ -4317,6 +4596,8 @@ function cancelQueueItem(item) {
   if (!state.isProcessing || !item || item.cancelRequested || item.blob) return;
   item.cancelRequested = true;
   item.abortController?.abort();
+  if (!item.startedAt) startTaskTiming(item);
+  finishTaskTiming(item, "canceled");
   setItemCancelable(item, false);
   item.editButton.disabled = true;
   item.downloadButton.disabled = true;
