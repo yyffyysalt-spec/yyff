@@ -273,6 +273,14 @@ svg {
   gap: 10px;
 }
 
+.control-hint {
+  margin: -2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
 .control-label,
 .field span,
 .slider-row span {

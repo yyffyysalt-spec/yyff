@@ -144,6 +144,8 @@ const MODEL_PRESETS = {
 };
 const APP_CONFIG = window.APP_CONFIG || {};
 const ONE_MB = 1024 * 1024;
+const REMOVE_BG_MODEL_STORAGE_KEY = "imageBatchStudio.removeBgModel.v1";
+const HIDDEN_REMOVE_BG_MODEL_IDS = new Set(["rmbg20", "rmbg-2.0", "rmbg", "runninghub-rmbg", "runninghub-rmbg20"]);
 const BUILT_IN_REMOVE_BG_MODELS = [
   {
     id: "local-fast",
@@ -274,6 +276,8 @@ els.compressPreviewCard.addEventListener("click", openCompressionPreview);
 els.compressToggleButton.addEventListener("click", toggleCompressionPanel);
 els.modelSelect.addEventListener("change", () => {
   updateSelectTitle(els.modelSelect);
+  saveSelectedRemoveBgModel();
+  updateOptionVisibility();
   updateApiControls();
   updateUi();
 });
@@ -2714,6 +2718,7 @@ function normalizeRemoveBgWorkflows(workflows) {
       const id = String(workflow?.id || "").trim();
       const label = String(workflow?.label || "").trim();
       const provider = String(workflow?.provider || "runninghub").trim();
+      if (shouldHideRemoveBgModel(id, label)) return null;
       if (!id || !label || !["runninghub"].includes(provider) || seen.has(id)) return null;
       seen.add(id);
       return {
@@ -2760,7 +2765,8 @@ function normalizeRemoveBgAiApps(apps) {
 function initializeRemoveBgModelOptions() {
   els.modelSelect.innerHTML = "";
 
-  getRemoveBgChoices().forEach((choice) => {
+  const choices = getRemoveBgChoices();
+  choices.forEach((choice) => {
     const option = document.createElement("option");
     option.value = choice.id;
     option.textContent = choice.label;
@@ -2768,7 +2774,9 @@ function initializeRemoveBgModelOptions() {
     els.modelSelect.append(option);
   });
 
-  els.modelSelect.value = getDefaultRemoveBgChoice().id;
+  const savedChoice = getStoredRemoveBgChoice();
+  els.modelSelect.value = (savedChoice || getDefaultRemoveBgChoice()).id;
+  saveSelectedRemoveBgModel();
   updateSelectTitle(els.modelSelect);
   syncCustomSelects();
 }
@@ -2778,8 +2786,8 @@ function getRemoveBgChoices() {
   const koukoutu = getRemoveBgChoiceFromList("koukoutu", BUILT_IN_REMOVE_BG_MODELS);
   return [
     local,
-    ...REMOVE_BG_WORKFLOWS,
     ...REMOVE_BG_AI_APPS,
+    ...REMOVE_BG_WORKFLOWS,
     koukoutu,
   ].filter(Boolean);
 }
@@ -2799,6 +2807,31 @@ function getRemoveBgChoice(value) {
 
 function getRemoveBgChoiceFromList(value, choices) {
   return choices.find((choice) => choice.id === value) || null;
+}
+
+function shouldHideRemoveBgModel(id, label = "") {
+  const normalizedId = String(id || "").trim().toLowerCase();
+  const normalizedLabel = String(label || "").trim().toLowerCase();
+  return HIDDEN_REMOVE_BG_MODEL_IDS.has(normalizedId) || /rmbg|rmbg-?2\.?0/i.test(normalizedId) || /rmbg|rmbg-?2\.?0/i.test(normalizedLabel);
+}
+
+function getStoredRemoveBgChoice() {
+  try {
+    const savedId = localStorage.getItem(REMOVE_BG_MODEL_STORAGE_KEY) || "";
+    if (!savedId || shouldHideRemoveBgModel(savedId)) return null;
+    return getRemoveBgChoices().find((choice) => choice.id === savedId) || null;
+  } catch {
+    return null;
+  }
+}
+
+function saveSelectedRemoveBgModel() {
+  try {
+    const selected = getSelectedRemoveBgChoice();
+    localStorage.setItem(REMOVE_BG_MODEL_STORAGE_KEY, selected.id);
+  } catch {
+    // localStorage may be unavailable when opening from stricter file contexts.
+  }
 }
 
 function normalizeUpscaleWorkflows(workflows) {
@@ -3094,13 +3127,15 @@ function updateOptionVisibility() {
   const mode = getSelectedMode();
   const needsCutoutOptions = mode !== "upscale";
   const needsUpscaleOptions = mode !== "cutout";
+  const selectedRemoveBgChoice = getSelectedRemoveBgChoice();
+  const needsTolerance = needsCutoutOptions && selectedRemoveBgChoice.provider === "local";
 
   setElementHidden(els.edgeFeatherOption, true);
   setElementHidden(els.edgeShrinkOption, true);
   setElementHidden(els.autoCropOption, true);
 
   setElementHidden(els.modelOption, !needsCutoutOptions);
-  setElementHidden(els.toleranceOption, !needsCutoutOptions);
+  setElementHidden(els.toleranceOption, !needsTolerance);
 
   setElementHidden(els.scaleOption, !needsUpscaleOptions);
   setElementHidden(els.upscaleProviderOption, !needsUpscaleOptions);
