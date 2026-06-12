@@ -3,9 +3,13 @@ main = "runninghub-ai-removebg-worker.js"
 compatibility_date = "2025-01-01"
 
 [vars]
+RUNNINGHUB_AI_APP_CREATE_ENDPOINT = "https://www.runninghub.cn/openapi/v2/run/ai-app/1950866462321876993"
 RUNNINGHUB_AI_APP_ID = "1950866462321876993"
-# The AI App API format is different from workflow APIs. Fill these after copying
-# the exact API invocation parameters from the RunningHub AI App page.
-# RUNNINGHUB_AI_APP_CREATE_ENDPOINT = "https://www.runninghub.ai/..."
-# RUNNINGHUB_AI_APP_STATUS_ENDPOINT = "https://www.runninghub.ai/task/openapi/outputs"
-# RUNNINGHUB_AI_APP_IMAGE_FIELD_NAME = "image"
+RUNNINGHUB_AI_APP_IMAGE_NODE_ID = "64"
+RUNNINGHUB_AI_APP_IMAGE_FIELD_NAME = "image"
+RUNNINGHUB_AI_APP_OUTPUT_TYPE_NODE_ID = "50"
+RUNNINGHUB_AI_APP_OUTPUT_TYPE_FIELD_NAME = "value"
+RUNNINGHUB_AI_APP_OUTPUT_TYPE_VALUE = "0"
+RUNNINGHUB_AI_APP_SUBJECT_NODE_ID = "69"
+RUNNINGHUB_AI_APP_SUBJECT_FIELD_NAME = "text"
+RUNNINGHUB_AI_APP_SUBJECT_VALUE = "主体"

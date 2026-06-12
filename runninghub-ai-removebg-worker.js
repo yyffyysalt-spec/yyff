@@ -1,6 +1,13 @@
-const RUNNINGHUB_BASE_URL = "https://www.runninghub.ai";
+const RUNNINGHUB_BASE_URL = "https://www.runninghub.cn";
 const DEFAULT_AI_APP_ID = "1950866462321876993";
+const DEFAULT_IMAGE_NODE_ID = "64";
 const DEFAULT_IMAGE_FIELD_NAME = "image";
+const DEFAULT_OUTPUT_TYPE_NODE_ID = "50";
+const DEFAULT_OUTPUT_TYPE_FIELD_NAME = "value";
+const DEFAULT_OUTPUT_TYPE_VALUE = "0";
+const DEFAULT_SUBJECT_NODE_ID = "69";
+const DEFAULT_SUBJECT_FIELD_NAME = "text";
+const DEFAULT_SUBJECT_VALUE = "主体";
 const DEFAULT_OUTPUT_NODE_ID = "";
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 const TRANSPARENT_OUTPUT_NODE_IDS = new Set(["114", "120"]);
@@ -37,7 +44,7 @@ export default {
 async function handleAiRemoveBackgroundRequest(request, env) {
   logStage("received_request", { method: request.method });
   const config = validateConfig(env);
-  const { apiKey, appId, imageFieldName, createEndpoint, statusEndpoint, outputNodeId } = config;
+  const { apiKey, appId, createEndpoint, statusEndpoint, outputNodeId, apiBaseUrl, nodeConfig } = config;
   const payload = await readActionPayload(request);
   const action = payload.action || (payload.file ? "create" : "status");
   logStage("action", { action });
@@ -46,8 +53,9 @@ async function handleAiRemoveBackgroundRequest(request, env) {
     return createAiRemoveBackgroundTask({
       apiKey,
       appId,
-      imageFieldName,
       createEndpoint,
+      apiBaseUrl,
+      nodeConfig,
       image: payload.file,
     });
   }
@@ -58,13 +66,14 @@ async function handleAiRemoveBackgroundRequest(request, env) {
       taskId: payload.taskId,
       statusEndpoint,
       outputNodeId,
+      apiBaseUrl,
     });
   }
 
   throw stageError("config", "不支持的 RunningHub AI 抠图 action", `当前 action：${action || "(empty)"}`, 400);
 }
 
-async function createAiRemoveBackgroundTask({ apiKey, appId, imageFieldName, createEndpoint, image }) {
+async function createAiRemoveBackgroundTask({ apiKey, appId, createEndpoint, apiBaseUrl, nodeConfig, image }) {
   if (!createEndpoint) {
     throw stageError(
       "ai_app_api_not_configured",
@@ -83,21 +92,20 @@ async function createAiRemoveBackgroundTask({ apiKey, appId, imageFieldName, cre
   }
 
   logStage("upload_resource_start", { input_file_size: image.size, fileType: image.type || "unknown" });
-  const uploadedFilename = await uploadResource(image, apiKey);
+  const uploadedFilename = await uploadResource(image, apiKey, apiBaseUrl);
   logStage("upload_resource_done", { filename: uploadedFilename });
 
+  const nodeInfoList = buildAiAppNodeInfoList(nodeConfig, uploadedFilename);
   logStage("create_task_payload_summary", {
     appId,
-    imageFieldName,
     createEndpoint,
     uploadedFilename,
+    nodeInfoList,
   });
   const taskId = await createAiAppTask({
     apiKey,
-    appId,
-    imageFieldName,
     createEndpoint,
-    uploadedFilename,
+    nodeInfoList,
   });
   logStage("create_task_done", { taskId });
 
@@ -110,13 +118,13 @@ async function createAiRemoveBackgroundTask({ apiKey, appId, imageFieldName, cre
   });
 }
 
-async function checkAiRemoveBackgroundTask({ apiKey, taskId, statusEndpoint, outputNodeId }) {
+async function checkAiRemoveBackgroundTask({ apiKey, taskId, statusEndpoint, outputNodeId, apiBaseUrl }) {
   if (!taskId) {
     throw stageError("config", "RunningHub AI 抠图 taskId 缺失", "请在 status 请求中传入 taskId。", 400);
   }
 
   logStage("status_check", { taskId });
-  const response = await fetch(statusEndpoint || `${RUNNINGHUB_BASE_URL}/task/openapi/outputs`, {
+  const response = await fetch(statusEndpoint || `${apiBaseUrl}/task/openapi/outputs`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -232,10 +240,18 @@ async function readActionPayload(request) {
 function validateConfig(env) {
   const apiKey = env.RUNNINGHUB_API_KEY;
   const appId = env.RUNNINGHUB_AI_APP_ID || DEFAULT_AI_APP_ID;
+  const imageNodeId = env.RUNNINGHUB_AI_APP_IMAGE_NODE_ID || DEFAULT_IMAGE_NODE_ID;
   const imageFieldName = env.RUNNINGHUB_AI_APP_IMAGE_FIELD_NAME || DEFAULT_IMAGE_FIELD_NAME;
   const createEndpoint = env.RUNNINGHUB_AI_APP_CREATE_ENDPOINT || "";
   const statusEndpoint = env.RUNNINGHUB_AI_APP_STATUS_ENDPOINT || "";
   const outputNodeId = env.RUNNINGHUB_AI_APP_OUTPUT_NODE_ID || DEFAULT_OUTPUT_NODE_ID;
+  const outputTypeNodeId = env.RUNNINGHUB_AI_APP_OUTPUT_TYPE_NODE_ID || DEFAULT_OUTPUT_TYPE_NODE_ID;
+  const outputTypeFieldName = env.RUNNINGHUB_AI_APP_OUTPUT_TYPE_FIELD_NAME || DEFAULT_OUTPUT_TYPE_FIELD_NAME;
+  const outputTypeValue = env.RUNNINGHUB_AI_APP_OUTPUT_TYPE_VALUE || DEFAULT_OUTPUT_TYPE_VALUE;
+  const subjectNodeId = env.RUNNINGHUB_AI_APP_SUBJECT_NODE_ID || DEFAULT_SUBJECT_NODE_ID;
+  const subjectFieldName = env.RUNNINGHUB_AI_APP_SUBJECT_FIELD_NAME || DEFAULT_SUBJECT_FIELD_NAME;
+  const subjectValue = env.RUNNINGHUB_AI_APP_SUBJECT_VALUE || DEFAULT_SUBJECT_VALUE;
+  const apiBaseUrl = normalizeBaseUrl(env.RUNNINGHUB_AI_APP_API_BASE_URL || getEndpointOrigin(createEndpoint) || RUNNINGHUB_BASE_URL);
 
   if (!apiKey) throw stageError("config", "RunningHub API Key 缺失", "请在 Cloudflare Worker Secret 中配置 RUNNINGHUB_API_KEY。");
   if (!appId) {
@@ -245,14 +261,35 @@ function validateConfig(env) {
     throw stageError("config", "RunningHub AI 抠图图片字段未配置", "请配置 RUNNINGHUB_AI_APP_IMAGE_FIELD_NAME。");
   }
 
-  return { apiKey, appId, imageFieldName, createEndpoint, statusEndpoint, outputNodeId };
+  if (!imageNodeId) throw stageError("config", "RunningHub AI 抠图图片节点未配置", "请配置 RUNNINGHUB_AI_APP_IMAGE_NODE_ID。");
+  if (!outputTypeNodeId || !outputTypeFieldName) throw stageError("config", "RunningHub AI 抠图输出类型节点未配置", "请配置 RUNNINGHUB_AI_APP_OUTPUT_TYPE_NODE_ID 和 RUNNINGHUB_AI_APP_OUTPUT_TYPE_FIELD_NAME。");
+  if (!subjectNodeId || !subjectFieldName) throw stageError("config", "RunningHub AI 抠图对象节点未配置", "请配置 RUNNINGHUB_AI_APP_SUBJECT_NODE_ID 和 RUNNINGHUB_AI_APP_SUBJECT_FIELD_NAME。");
+
+  return {
+    apiKey,
+    appId,
+    createEndpoint,
+    statusEndpoint,
+    outputNodeId,
+    apiBaseUrl,
+    nodeConfig: {
+      imageNodeId,
+      imageFieldName,
+      outputTypeNodeId,
+      outputTypeFieldName,
+      outputTypeValue,
+      subjectNodeId,
+      subjectFieldName,
+      subjectValue,
+    },
+  };
 }
 
-async function uploadResource(file, apiKey) {
+async function uploadResource(file, apiKey, apiBaseUrl) {
   const form = new FormData();
   form.set("file", file, file.name || "input.png");
 
-  const response = await fetch(`${RUNNINGHUB_BASE_URL}/openapi/v2/media/upload/binary`, {
+  const response = await fetch(`${apiBaseUrl}/openapi/v2/media/upload/binary`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -268,31 +305,52 @@ async function uploadResource(file, apiKey) {
   return filename;
 }
 
-async function createAiAppTask({ apiKey, appId, imageFieldName, createEndpoint, uploadedFilename }) {
+function buildAiAppNodeInfoList(nodeConfig, uploadedFilename) {
+  return [
+    {
+      nodeId: String(nodeConfig.imageNodeId),
+      fieldName: nodeConfig.imageFieldName,
+      fieldValue: uploadedFilename,
+    },
+    {
+      nodeId: String(nodeConfig.outputTypeNodeId),
+      fieldName: nodeConfig.outputTypeFieldName,
+      fieldValue: String(nodeConfig.outputTypeValue),
+    },
+    {
+      nodeId: String(nodeConfig.subjectNodeId),
+      fieldName: nodeConfig.subjectFieldName,
+      fieldValue: String(nodeConfig.subjectValue),
+    },
+  ];
+}
+
+async function createAiAppTask({ apiKey, createEndpoint, nodeInfoList }) {
   const response = await fetch(createEndpoint, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      apiKey,
-      appId,
-      aiAppId: appId,
-      [imageFieldName]: uploadedFilename,
-      input: {
-        [imageFieldName]: uploadedFilename,
-      },
-      params: {
-        [imageFieldName]: uploadedFilename,
-      },
-    }),
+    body: JSON.stringify({ nodeInfoList }),
   });
   const data = await readRunningHubJson(response, "create_task", "RunningHub AI App 创建抠图任务失败");
   const taskId = data?.data?.taskId || data?.data?.task_id || data?.data?.id;
 
   if (!taskId) throw stageError("create_task", "RunningHub AI App 创建抠图任务成功但没有返回 taskId", summarizeData(data));
   return taskId;
+}
+
+function getEndpointOrigin(endpoint) {
+  try {
+    return new URL(endpoint).origin;
+  } catch (error) {
+    return "";
+  }
+}
+
+function normalizeBaseUrl(value) {
+  return String(value || RUNNINGHUB_BASE_URL).trim().replace(/\/+$/, "");
 }
 
 async function readRunningHubJson(response, stage, fallbackMessage) {
