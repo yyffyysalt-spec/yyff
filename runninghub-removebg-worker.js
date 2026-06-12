@@ -119,29 +119,43 @@ async function checkRemoveBackgroundTask({ apiKey, taskId, outputNodeId }) {
   }
   const status = getRunningHubStatus(data);
   const message = getRunningHubMessage(data);
-  const selection = selectTransparentCutoutOutput(data, outputNodeId);
+  const selection = selectRunningHubOutput(data, outputNodeId);
   logStage("runninghub_status", {
     taskId,
     status,
     runninghub_code: data?.code ?? data?.data?.code ?? "",
     runninghub_message: message,
-    raw_output_keys: getRawOutputKeys(data),
-    candidateCount: selection.candidates.length,
+    raw_response_top_level_keys: Object.keys(data || {}).slice(0, 40),
+    raw_response_data_keys: getRawOutputKeys(data),
+    candidateCount: selection.downloadableCandidates.length,
     configured_output_node_id: outputNodeId || DEFAULT_OUTPUT_NODE_ID,
   });
 
-  logStage("output_candidates", {
+  logStage("all_image_like_candidates", {
     taskId,
     configured_output_node_id: outputNodeId || DEFAULT_OUTPUT_NODE_ID,
     candidates: selection.candidates.map(toCandidateLog),
+  });
+  logStage("downloadable_candidates", {
+    taskId,
+    candidates: selection.downloadableCandidates.map(toCandidateLog),
+  });
+  logStage("mask_candidates", {
+    taskId,
+    candidates: selection.maskCandidates.map(toCandidateLog),
+  });
+  logStage("color_candidates", {
+    taskId,
+    candidates: selection.colorCandidates.map(toCandidateLog),
   });
 
   if (selection.selected) {
     logStage("selected_output", {
       taskId,
       selected: toCandidateLog(selection.selected),
+      selected_output_reason: selection.reason,
     });
-    return downloadSelectedOutput(selection.selected.fileUrl, taskId);
+    return downloadSelectedOutput(selection.selected, taskId, selection.resultType, selection.reason);
   }
 
   if (isRunningHubFailure(data)) {
@@ -156,8 +170,9 @@ async function checkRemoveBackgroundTask({ apiKey, taskId, outputNodeId }) {
   });
 }
 
-async function downloadSelectedOutput(fileUrl, taskId) {
-  logStage("selected_output", { taskId, fileUrl });
+async function downloadSelectedOutput(candidate, taskId, resultType, reason) {
+  const fileUrl = candidate.url;
+  logStage("selected_output", { taskId, fileUrl, resultType, selected_output_reason: reason });
 
   const output = await fetch(fileUrl);
   if (!output.ok) {
@@ -169,7 +184,7 @@ async function downloadSelectedOutput(fileUrl, taskId) {
     throw stageError("download_result", "RunningHub 抠图输出不是图片", `Content-Type：${contentType}`, 502);
   }
 
-  logStage("download_result_done", { status: output.status, contentType });
+  logStage("download_result_done", { status: output.status, contentType, resultType, selected_output_reason: reason });
   return new Response(output.body, {
     status: 200,
     headers: {
@@ -177,7 +192,9 @@ async function downloadSelectedOutput(fileUrl, taskId) {
       "Content-Type": contentType.includes("png") ? contentType : "image/png",
       "Cache-Control": "no-store",
       "X-RemoveBG-Status": "done",
+      "X-RemoveBG-Result-Type": resultType,
       "X-RemoveBG-TaskId": taskId,
+      "X-RemoveBG-Selected-Reason": reason,
     },
   });
 }
@@ -289,20 +306,66 @@ async function safeRunningHubJson(response, stage) {
   }
 }
 
-function selectTransparentCutoutOutput(data, outputNodeId) {
+function selectRunningHubOutput(data, outputNodeId) {
   const candidates = collectOutputCandidates(data)
-    .map((candidate) => {
-      const scoredCandidate = { ...candidate };
-      scoredCandidate.score = scoreOutputCandidate(scoredCandidate, outputNodeId);
-      return scoredCandidate;
-    })
+    .map((candidate) => scoreOutputCandidate(candidate, outputNodeId))
     .sort((a, b) => b.score - a.score);
-  const usable = candidates.filter((candidate) => !candidate.excluded);
+  const downloadableCandidates = candidates.filter((candidate) => candidate.isDownloadable && candidate.isImage);
+  const maskCandidates = downloadableCandidates
+    .filter((candidate) => candidate.isMask)
+    .sort((a, b) => b.score - a.score);
+  const transparentCandidates = downloadableCandidates
+    .filter((candidate) => !candidate.isMask && !candidate.isWhite && !candidate.isBlack && (candidate.isConfiguredOutput || candidate.isTransparentNode || candidate.isTransparentHint))
+    .sort((a, b) => b.score - a.score);
+  const colorCandidates = downloadableCandidates
+    .filter((candidate) => !candidate.isMask)
+    .sort((a, b) => b.score - a.score);
 
-  if (usable.length === 1) return { candidates, selected: usable[0] };
+  if (transparentCandidates[0] && (!maskCandidates[0] || transparentCandidates[0].isTransparentHint)) {
+    const selected = transparentCandidates[0];
+    return {
+      candidates,
+      downloadableCandidates,
+      maskCandidates,
+      colorCandidates,
+      selected,
+      resultType: "transparent",
+      reason: selected.isConfiguredOutput ? "configured_output_node" : "transparent_candidate",
+    };
+  }
+
+  if (maskCandidates[0]) {
+    return {
+      candidates,
+      downloadableCandidates,
+      maskCandidates,
+      colorCandidates,
+      selected: maskCandidates[0],
+      resultType: "mask",
+      reason: "mask_candidate",
+    };
+  }
+
+  if (colorCandidates[0]) {
+    return {
+      candidates,
+      downloadableCandidates,
+      maskCandidates,
+      colorCandidates,
+      selected: colorCandidates[0],
+      resultType: "fallback_image",
+      reason: "fallback_downloadable_candidate",
+    };
+  }
+
   return {
     candidates,
-    selected: usable.find((candidate) => candidate.score >= 0) || null,
+    downloadableCandidates,
+    maskCandidates,
+    colorCandidates,
+    selected: null,
+    resultType: "",
+    reason: "no_downloadable_image",
   };
 }
 
@@ -312,7 +375,18 @@ function collectOutputCandidates(data) {
   const root = data?.data ?? data;
 
   function visit(value, path = "", inheritedNodeIds = []) {
-    if (!value || typeof value !== "object") return;
+    if (!value) return;
+
+    if (typeof value === "string") {
+      const url = normalizeOutputUrl(value);
+      if (url && !seen.has(`${url}:${path}`)) {
+        seen.add(`${url}:${path}`);
+        candidates.push(createOutputCandidate({ url, item: { value }, path, nodeIds: inheritedNodeIds }));
+      }
+      return;
+    }
+
+    if (typeof value !== "object") return;
 
     if (Array.isArray(value)) {
       value.forEach((item, index) => visit(item, `${path}[${index}]`, inheritedNodeIds));
@@ -320,20 +394,21 @@ function collectOutputCandidates(data) {
     }
 
     const nodeIds = uniqueStrings([...inheritedNodeIds, ...getOutputNodeIds(value)]);
-    const fileUrl = getOutputFileUrl(value);
-    if (fileUrl && !seen.has(fileUrl)) {
-      seen.add(fileUrl);
-      const text = `${fileUrl} ${JSON.stringify(value)}`.toLowerCase();
-      candidates.push({
-        item: value,
-        fileUrl,
-        path,
-        nodeIds,
-        isImage: isImageOutput(value, fileUrl),
-        isPng: /\.png(?:[?#]|$)/i.test(fileUrl) || /image\/png/i.test(text),
-        isMask: nodeIds.some((id) => MASK_OUTPUT_NODE_IDS.has(id)) || /mask|segmentation|matte/i.test(text),
-        isWhite: nodeIds.some((id) => WHITE_OUTPUT_NODE_IDS.has(id)) || /white|add_background.*white|background.*white|白底/i.test(text),
-      });
+    const urls = getOutputUrls(value);
+    urls.forEach((url) => {
+      const key = `${url}:${path}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      candidates.push(createOutputCandidate({ url, item: value, path, nodeIds }));
+    });
+
+    const filename = getOutputFilename(value);
+    if (filename && !urls.length) {
+      const key = `filename:${filename}:${path}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        candidates.push(createOutputCandidate({ url: "", item: value, path, nodeIds, filename }));
+      }
     }
 
     Object.entries(value).forEach(([key, child]) => {
@@ -346,8 +421,90 @@ function collectOutputCandidates(data) {
   return candidates;
 }
 
-function getOutputFileUrl(item) {
-  return item?.fileUrl || item?.file_url || item?.url || item?.imageUrl || item?.image_url || "";
+function createOutputCandidate({ url, item, path, nodeIds, filename = "" }) {
+  const outputFilename = filename || getOutputFilename(item) || extractFilenameFromUrl(url);
+  const mime = getOutputMime(item);
+  const text = `${url} ${outputFilename} ${mime} ${path} ${safeStringify(item)}`.toLowerCase();
+  const isMask = nodeIds.some((id) => MASK_OUTPUT_NODE_IDS.has(id)) || /mask|segmentation|matte|alpha/i.test(text);
+  const isWhite = nodeIds.some((id) => WHITE_OUTPUT_NODE_IDS.has(id)) || /white|add_background.*white|background.*white|白底/i.test(text);
+  const isBlack = /black|add_background.*black|background.*black|黑底/i.test(text);
+  return {
+    item,
+    url,
+    filename: outputFilename,
+    path,
+    nodeIds,
+    mime,
+    isDownloadable: /^https?:\/\//i.test(url),
+    isImage: isImageOutput(item, url, outputFilename, mime),
+    isPng: /\.png(?:[?#]|$)/i.test(url) || /\.png$/i.test(outputFilename) || /image\/png/i.test(mime),
+    isMask,
+    isWhite,
+    isBlack,
+    isConfiguredOutput: false,
+    isTransparentNode: false,
+    isTransparentHint: /transparent|removebg|rembg|cutout|alpha|none/i.test(text) && !isMask,
+    score: 0,
+    reason: "",
+  };
+}
+
+function getOutputUrls(item) {
+  const urls = [
+    item?.url,
+    item?.fileUrl,
+    item?.file_url,
+    item?.imageUrl,
+    item?.image_url,
+    item?.downloadUrl,
+    item?.download_url,
+    item?.src,
+    item?.href,
+  ];
+  Object.entries(item || {}).forEach(([key, value]) => {
+    if (typeof value === "string" && /url|uri|href|path|file|image|download/i.test(key)) urls.push(value);
+  });
+  return uniqueStrings(urls.map(normalizeOutputUrl).filter(Boolean));
+}
+
+function normalizeOutputUrl(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (/^https?:\/\//i.test(text)) return text;
+  if (/^\/\//.test(text)) return `https:${text}`;
+  if (/^\//.test(text)) return `${RUNNINGHUB_BASE_URL}${text}`;
+  return "";
+}
+
+function getOutputFilename(item) {
+  return (
+    item?.fileName ||
+    item?.filename ||
+    item?.name ||
+    item?.originFilename ||
+    item?.origin_filename ||
+    item?.path ||
+    ""
+  ).toString();
+}
+
+function getOutputMime(item) {
+  return (
+    item?.contentType ||
+    item?.content_type ||
+    item?.mime ||
+    item?.mimeType ||
+    item?.type ||
+    ""
+  ).toString();
+}
+
+function extractFilenameFromUrl(url) {
+  try {
+    return decodeURIComponent(new URL(url).pathname.split("/").pop() || "");
+  } catch (error) {
+    return "";
+  }
 }
 
 function getOutputNodeIds(item) {
@@ -372,37 +529,64 @@ function uniqueStrings(values) {
   return [...new Set(values.map((value) => String(value)).filter(Boolean))];
 }
 
-function isImageOutput(item, fileUrl) {
-  const text = `${fileUrl} ${item?.contentType || item?.content_type || item?.mime || item?.mimeType || ""}`.toLowerCase();
-  return /^https?:\/\//i.test(fileUrl) && (/image\//i.test(text) || /\.(png|jpe?g|webp)(?:[?#]|$)/i.test(fileUrl));
+function isImageOutput(item, url, filename, mime) {
+  const text = `${url} ${filename} ${mime} ${safeStringify(item)}`.toLowerCase();
+  return /^https?:\/\//i.test(url) && (/image\//i.test(text) || /\.(png|jpe?g|webp)(?:[?#]|$)/i.test(url) || /\.(png|jpe?g|webp)$/i.test(filename));
 }
 
 function scoreOutputCandidate(candidate, outputNodeId) {
-  const { item, fileUrl, nodeIds } = candidate;
-  const text = `${fileUrl} ${JSON.stringify(item)}`.toLowerCase();
+  const scored = { ...candidate };
+  const { item, url, nodeIds } = scored;
+  const text = `${url} ${scored.filename} ${scored.mime} ${scored.path} ${safeStringify(item)}`.toLowerCase();
   let score = 0;
 
-  candidate.excluded = !candidate.isImage || candidate.isMask || candidate.isWhite;
-  if (candidate.excluded) return -1000;
-  if (outputNodeId && nodeIds.includes(String(outputNodeId))) score += 180;
-  if (nodeIds.some((id) => TRANSPARENT_OUTPUT_NODE_IDS.has(id))) score += 140;
-  if (/\.png(?:[?#]|$)/i.test(fileUrl) || /image\/png/i.test(text)) score += 30;
+  scored.isConfiguredOutput = Boolean(outputNodeId && nodeIds.includes(String(outputNodeId)));
+  scored.isTransparentNode = nodeIds.some((id) => TRANSPARENT_OUTPUT_NODE_IDS.has(id));
+  scored.isTransparentHint = /transparent|removebg|rembg|cutout|none/i.test(text) && !scored.isMask;
+  if (!scored.isDownloadable) score -= 500;
+  if (!scored.isImage) score -= 300;
+  if (scored.isConfiguredOutput) score += 180;
+  if (scored.isTransparentNode) score += 140;
+  if (scored.isMask) score += 120;
+  if (scored.isPng) score += 30;
   if (/rembg|removebg|transparent|alpha|none|png/i.test(text)) score += 20;
-
-  return score;
+  if (scored.isWhite) score -= 40;
+  if (scored.isBlack) score -= 10;
+  scored.score = score;
+  scored.reason = scored.isMask
+    ? "mask_candidate"
+    : scored.isConfiguredOutput
+      ? "configured_output_node"
+      : scored.isTransparentNode
+        ? "transparent_output_node"
+        : "downloadable_image";
+  return scored;
 }
 
 function toCandidateLog(candidate) {
   return {
     nodeIds: candidate.nodeIds,
-    fileUrl: candidate.fileUrl,
+    url: candidate.url,
+    filename: candidate.filename,
     path: candidate.path,
+    mime: candidate.mime,
     score: candidate.score,
-    excluded: candidate.excluded,
+    isDownloadable: candidate.isDownloadable,
+    isImage: candidate.isImage,
     isPng: candidate.isPng,
     isMask: candidate.isMask,
     isWhite: candidate.isWhite,
+    isBlack: candidate.isBlack,
+    reason: candidate.reason,
   };
+}
+
+function safeStringify(value) {
+  try {
+    return JSON.stringify(value, (key, child) => (key === "apiKey" ? "[redacted]" : child)).slice(0, 3000);
+  } catch (error) {
+    return "";
+  }
 }
 
 function isRunningHubFailure(data) {

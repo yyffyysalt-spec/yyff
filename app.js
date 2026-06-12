@@ -3917,7 +3917,7 @@ async function removeBackgroundWithRunningHub(file, options, item = null, source
     await delay(80, signal);
   }
 
-  const outputBlob = await requestRunningHubRemoveBg(uploadInput.blob, {
+  const outputResult = await requestRunningHubRemoveBg(uploadInput.blob, {
     label,
     workflowId: options.model,
     uploadName: uploadInput.name,
@@ -3935,11 +3935,23 @@ async function removeBackgroundWithRunningHub(file, options, item = null, source
     },
   });
 
-  setStatus("RunningHub 已生成输出，正在下载...");
-  const cutoutCanvas = await blobToCanvas(outputBlob);
+  if (outputResult.resultType === "mask") {
+    setStatus("RunningHub 已返回 mask，正在合成透明 PNG...");
+  } else if (outputResult.resultType === "transparent") {
+    setStatus("RunningHub 已返回透明结果，正在下载...");
+  } else {
+    setStatus("RunningHub 未返回 mask，已使用可下载结果图。");
+  }
+  const cutoutCanvas = await blobToCanvas(outputResult.blob);
   if (item?.cancelRequested || signal?.aborted) throw createCanceledTaskError();
-  setStatus("正在还原到原图尺寸...");
-  const output = restoreRunningHubRemoveBgToOriginal(originalCanvas, cutoutCanvas);
+  if (outputResult.resultType === "mask") setStatus("正在将 mask 应用到原图...");
+  else if (outputResult.resultType === "transparent") setStatus("正在还原到原图尺寸...");
+  const output =
+    outputResult.resultType === "mask"
+      ? applyMaskToOriginalCanvas(originalCanvas, cutoutCanvas)
+      : outputResult.resultType === "transparent"
+        ? restoreRunningHubRemoveBgToOriginal(originalCanvas, cutoutCanvas)
+        : resizeCanvasTo(cutoutCanvas, originalCanvas.width, originalCanvas.height);
   setStatus("RMBG-2.0 高质量抠图完成");
   return output;
 }
@@ -3972,7 +3984,7 @@ async function requestRunningHubRemoveBg(file, { label, workflowId, uploadName =
     ok: response.ok,
   });
 
-  if (isImageResponse(response)) return response.blob();
+  if (isImageResponse(response)) return readRunningHubImageResult(response);
 
   if (!response.ok) {
     const errorInfo = await readRunningHubWorkerError(response);
@@ -4015,14 +4027,17 @@ async function requestRunningHubRemoveBg(file, { label, workflowId, uploadName =
     });
 
     if (isImageResponse(statusResponse)) {
-      onStatus?.("RunningHub 已生成输出，正在下载...");
+      const resultType = getRemoveBgResultType(statusResponse);
+      onStatus?.(resultType === "mask" ? "RunningHub 已返回 mask，正在合成透明 PNG..." : "RunningHub 已生成输出，正在下载...");
       console.log(`[${label}] removebg done`, {
         provider: "runninghub",
         workflow: workflowId,
         taskId: task.taskId,
         pollCount,
+        resultType,
+        selectedReason: statusResponse.headers.get("X-RemoveBG-Selected-Reason") || "",
       });
-      return statusResponse.blob();
+      return readRunningHubImageResult(statusResponse);
     }
 
     const data = await readWorkerJson(statusResponse);
@@ -4092,6 +4107,30 @@ function restoreRunningHubRemoveBgToOriginal(originalCanvas, cutoutCanvas) {
   return composeRgbWithAlpha(originalCanvas, resizedAlpha);
 }
 
+function applyMaskToOriginalCanvas(originalCanvas, maskCanvas) {
+  const resizedMask = resizeCanvasTo(maskCanvas, originalCanvas.width, originalCanvas.height);
+  const output = resizeCanvasTo(originalCanvas, originalCanvas.width, originalCanvas.height);
+  const outCtx = output.getContext("2d", { willReadFrequently: true });
+  const maskCtx = resizedMask.getContext("2d", { willReadFrequently: true });
+  const outputImage = outCtx.getImageData(0, 0, output.width, output.height);
+  const maskImage = maskCtx.getImageData(0, 0, resizedMask.width, resizedMask.height);
+  const outputData = outputImage.data;
+  const maskData = maskImage.data;
+
+  for (let index = 0; index < outputData.length; index += 4) {
+    const gray = Math.round((maskData[index] + maskData[index + 1] + maskData[index + 2]) / 3);
+    outputData[index + 3] = gray;
+    if (gray === 0) {
+      outputData[index] = 0;
+      outputData[index + 1] = 0;
+      outputData[index + 2] = 0;
+    }
+  }
+
+  outCtx.putImageData(outputImage, 0, 0);
+  return output;
+}
+
 async function requestRunningHubRemoveBgStatus(taskId, signal = null) {
   try {
     return await fetch(REMOVE_BG_PROXY_URL, {
@@ -4117,6 +4156,20 @@ async function requestRunningHubRemoveBgStatus(taskId, signal = null) {
 function isImageResponse(response) {
   const contentType = response.headers.get("Content-Type") || "";
   return /^image\//i.test(contentType) || response.headers.get("X-RemoveBG-Status") === "done";
+}
+
+function getRemoveBgResultType(response) {
+  const resultType = (response.headers.get("X-RemoveBG-Result-Type") || "").trim();
+  return resultType || "transparent";
+}
+
+async function readRunningHubImageResult(response) {
+  return {
+    blob: await response.blob(),
+    resultType: getRemoveBgResultType(response),
+    selectedReason: response.headers.get("X-RemoveBG-Selected-Reason") || "",
+    taskId: response.headers.get("X-RemoveBG-TaskId") || "",
+  };
 }
 
 async function readWorkerJson(response) {
