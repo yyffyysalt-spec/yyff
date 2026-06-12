@@ -4025,14 +4025,10 @@ async function removeBackgroundWithRunningHub(file, options, item = null, source
   }
   const cutoutCanvas = await blobToCanvas(outputResult.blob);
   if (item?.cancelRequested || signal?.aborted) throw createCanceledTaskError();
-  if (outputResult.resultType === "mask") setStatus("正在将 mask 应用到原图...");
-  else if (outputResult.resultType === "transparent") setStatus("正在还原到原图尺寸...");
-  const output =
-    outputResult.resultType === "mask"
-      ? applyMaskToOriginalCanvas(originalCanvas, cutoutCanvas)
-      : outputResult.resultType === "transparent"
-        ? restoreRunningHubRemoveBgToOriginal(originalCanvas, cutoutCanvas)
-        : resizeCanvasTo(cutoutCanvas, originalCanvas.width, originalCanvas.height);
+  const output = resolveRunningHubRemoveBgOutputCanvas(originalCanvas, cutoutCanvas, outputResult, {
+    label,
+    setStatus,
+  });
   setStatus("RMBG-2.0 高质量抠图完成");
   return output;
 }
@@ -4088,12 +4084,10 @@ async function removeBackgroundWithRunningHubAiApp(file, options, item = null, s
 
   const cutoutCanvas = await blobToCanvas(outputResult.blob);
   if (item?.cancelRequested || signal?.aborted) throw createCanceledTaskError();
-  const output =
-    outputResult.resultType === "mask"
-      ? applyMaskToOriginalCanvas(originalCanvas, cutoutCanvas)
-      : outputResult.resultType === "transparent"
-        ? restoreRunningHubRemoveBgToOriginal(originalCanvas, cutoutCanvas)
-        : resizeCanvasTo(cutoutCanvas, originalCanvas.width, originalCanvas.height);
+  const output = resolveRunningHubRemoveBgOutputCanvas(originalCanvas, cutoutCanvas, outputResult, {
+    label,
+    setStatus,
+  });
   setStatus("RunningHub AI 抠图完成");
   return output;
 }
@@ -4263,6 +4257,40 @@ function restoreRunningHubRemoveBgToOriginal(originalCanvas, cutoutCanvas) {
   const alphaMask = createAlphaCanvas(cutoutCanvas);
   const resizedAlpha = resizeCanvasTo(alphaMask, originalCanvas.width, originalCanvas.height);
   return composeRgbWithAlpha(originalCanvas, resizedAlpha);
+}
+
+function resolveRunningHubRemoveBgOutputCanvas(originalCanvas, returnedCanvas, outputResult, { label = "RunningHub", setStatus = null } = {}) {
+  const returnedHasAlpha = canvasHasAnyTransparency(returnedCanvas);
+  const shouldApplyMask = outputResult.resultType === "mask";
+  const shouldUseTransparent = outputResult.resultType === "transparent" || (outputResult.resultType !== "mask" && returnedHasAlpha);
+  console.log(`[${label}] removebg result handling`, {
+    receivedResultType: outputResult.resultType || "",
+    selectedReason: outputResult.selectedReason || "",
+    returnedHasAlpha,
+    applyMaskToOriginalCanvasCalled: shouldApplyMask,
+    finalMode: shouldApplyMask ? "mask_to_original" : shouldUseTransparent ? "direct_transparent" : "fallback_image",
+    returnedWidth: returnedCanvas.width,
+    returnedHeight: returnedCanvas.height,
+    originalWidth: originalCanvas.width,
+    originalHeight: originalCanvas.height,
+  });
+
+  if (shouldApplyMask) {
+    setStatus?.("正在将 mask 应用到原图...");
+    const output = applyMaskToOriginalCanvas(originalCanvas, returnedCanvas);
+    console.log(`[${label}] final result canvas`, { width: output.width, height: output.height });
+    return output;
+  }
+
+  if (shouldUseTransparent) {
+    setStatus?.("正在使用透明 PNG 结果...");
+    console.log(`[${label}] final result canvas`, { width: returnedCanvas.width, height: returnedCanvas.height });
+    return returnedCanvas;
+  }
+
+  const output = resizeCanvasTo(returnedCanvas, originalCanvas.width, originalCanvas.height);
+  console.log(`[${label}] final result canvas`, { width: output.width, height: output.height });
+  return output;
 }
 
 function applyMaskToOriginalCanvas(originalCanvas, maskCanvas) {

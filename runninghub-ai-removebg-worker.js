@@ -203,15 +203,26 @@ async function downloadSelectedOutput(candidate, taskId, resultType, reason) {
     throw stageError("download_result", "RunningHub AI 抠图输出不是图片", `Content-Type：${contentType}`, 502);
   }
 
-  logStage("download_result_done", { status: output.status, contentType, resultType, selected_output_reason: reason });
-  return new Response(output.body, {
+  const buffer = await output.arrayBuffer();
+  const inspection = await inspectOutputImage(buffer, contentType, candidate);
+  const finalResultType = resolveDetectedResultType(resultType, candidate, inspection);
+  logStage("download_result_done", {
+    status: output.status,
+    contentType,
+    selected_output_reason: reason,
+    detected_alpha_pixels: inspection.transparentPixelCount,
+    detected_transparent_png: inspection.detectedTransparentPng,
+    detected_mask_image: inspection.detectedMaskImage,
+    resultType: finalResultType,
+  });
+  return new Response(buffer, {
     status: 200,
     headers: {
       ...CORS_HEADERS,
       "Content-Type": contentType.includes("png") ? contentType : "image/png",
       "Cache-Control": "no-store",
       "X-RemoveBG-Status": "done",
-      "X-RemoveBG-Result-Type": resultType,
+      "X-RemoveBG-Result-Type": finalResultType,
       "X-RemoveBG-TaskId": taskId,
       "X-RemoveBG-Selected-Reason": reason,
     },
@@ -738,6 +749,192 @@ function scoreOutputCandidate(candidate, outputNodeId) {
         ? "transparent_output_node"
         : "downloadable_image";
   return scored;
+}
+
+async function inspectOutputImage(buffer, contentType, candidate) {
+  const fallback = {
+    inspectable: false,
+    detectedTransparentPng: false,
+    detectedMaskImage: false,
+    transparentPixelCount: 0,
+    transparentPixelRatio: 0,
+  };
+  const isPng = /image\/png/i.test(contentType || "") || candidate.isPng || hasPngSignature(buffer);
+  if (!isPng) return fallback;
+
+  try {
+    const png = await inspectPngPixels(buffer);
+    return {
+      inspectable: true,
+      detectedTransparentPng: png.transparentPixelRatio > 0.002,
+      detectedMaskImage: !png.hasAlphaTransparency && png.grayPixelRatio > 0.985 && png.blackWhitePixelRatio > 0.88 && png.opaqueAlphaRatio > 0.995,
+      transparentPixelCount: png.transparentPixelCount,
+      transparentPixelRatio: png.transparentPixelRatio,
+    };
+  } catch (error) {
+    console.warn("[RunningHub AI RemoveBG Worker] inspect_output_image_failed", error?.message || String(error));
+    return fallback;
+  }
+}
+
+function resolveDetectedResultType(resultType, candidate, inspection) {
+  if (inspection.detectedTransparentPng) return "transparent";
+  if (inspection.detectedMaskImage) return "mask";
+  if (candidate.isMask && resultType !== "transparent") return "mask";
+  if (resultType === "transparent" && !inspection.inspectable) return "transparent";
+  if (resultType === "transparent" && candidate.isTransparentHint && !candidate.isMask) return "transparent";
+  return "fallback_image";
+}
+
+async function inspectPngPixels(buffer) {
+  const bytes = new Uint8Array(buffer);
+  if (!hasPngSignature(buffer)) throw new Error("not_png");
+
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  const idatParts = [];
+
+  while (offset + 12 <= bytes.length) {
+    const length = readUint32(bytes, offset);
+    const type = readAscii(bytes, offset + 4, 4);
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    if (dataEnd > bytes.length) break;
+
+    if (type === "IHDR") {
+      width = readUint32(bytes, dataStart);
+      height = readUint32(bytes, dataStart + 4);
+      bitDepth = bytes[dataStart + 8];
+      colorType = bytes[dataStart + 9];
+    } else if (type === "IDAT") {
+      idatParts.push(bytes.slice(dataStart, dataEnd));
+    } else if (type === "IEND") {
+      break;
+    }
+
+    offset = dataEnd + 4;
+  }
+
+  if (!width || !height || bitDepth !== 8 || !idatParts.length) {
+    throw new Error(`unsupported_png width=${width} height=${height} bitDepth=${bitDepth} colorType=${colorType}`);
+  }
+
+  const compressed = concatUint8Arrays(idatParts);
+  const inflated = await inflateZlibData(compressed);
+  const channels = getPngChannels(colorType);
+  const bpp = channels;
+  const stride = width * bpp;
+  const rgbaLike = [0, 2, 4, 6].includes(colorType);
+  if (!rgbaLike) throw new Error(`unsupported_color_type ${colorType}`);
+
+  let inputOffset = 0;
+  let transparentPixelCount = 0;
+  let grayPixelCount = 0;
+  let blackWhitePixelCount = 0;
+  let opaqueAlphaCount = 0;
+  const totalPixels = width * height;
+  let previous = new Uint8Array(stride);
+
+  for (let y = 0; y < height; y += 1) {
+    const filter = inflated[inputOffset];
+    inputOffset += 1;
+    const raw = inflated.slice(inputOffset, inputOffset + stride);
+    inputOffset += stride;
+    const row = unfilterPngRow(raw, previous, filter, bpp);
+
+    for (let x = 0; x < width; x += 1) {
+      const index = x * bpp;
+      const r = colorType === 0 || colorType === 4 ? row[index] : row[index];
+      const g = colorType === 0 || colorType === 4 ? row[index] : row[index + 1];
+      const b = colorType === 0 || colorType === 4 ? row[index] : row[index + 2];
+      const alpha = colorType === 6 ? row[index + 3] : colorType === 4 ? row[index + 1] : 255;
+      if (alpha < 250) transparentPixelCount += 1;
+      if (alpha >= 250) opaqueAlphaCount += 1;
+      if (Math.abs(r - g) <= 3 && Math.abs(r - b) <= 3 && Math.abs(g - b) <= 3) grayPixelCount += 1;
+      const avg = (r + g + b) / 3;
+      if (avg <= 18 || avg >= 237) blackWhitePixelCount += 1;
+    }
+
+    previous = row;
+  }
+
+  return {
+    transparentPixelCount,
+    transparentPixelRatio: transparentPixelCount / Math.max(1, totalPixels),
+    hasAlphaTransparency: transparentPixelCount > 0,
+    grayPixelRatio: grayPixelCount / Math.max(1, totalPixels),
+    blackWhitePixelRatio: blackWhitePixelCount / Math.max(1, totalPixels),
+    opaqueAlphaRatio: opaqueAlphaCount / Math.max(1, totalPixels),
+  };
+}
+
+function hasPngSignature(buffer) {
+  const bytes = new Uint8Array(buffer);
+  return bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a;
+}
+
+function readUint32(bytes, offset) {
+  return ((bytes[offset] << 24) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3]) >>> 0;
+}
+
+function readAscii(bytes, offset, length) {
+  return String.fromCharCode(...bytes.slice(offset, offset + length));
+}
+
+function concatUint8Arrays(parts) {
+  const length = parts.reduce((total, part) => total + part.length, 0);
+  const output = new Uint8Array(length);
+  let offset = 0;
+  parts.forEach((part) => {
+    output.set(part, offset);
+    offset += part.length;
+  });
+  return output;
+}
+
+async function inflateZlibData(data) {
+  if (typeof DecompressionStream !== "function") throw new Error("decompression_stream_unavailable");
+  const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate"));
+  const response = new Response(stream);
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+function getPngChannels(colorType) {
+  if (colorType === 0) return 1;
+  if (colorType === 2) return 3;
+  if (colorType === 4) return 2;
+  if (colorType === 6) return 4;
+  throw new Error(`unsupported_color_type ${colorType}`);
+}
+
+function unfilterPngRow(raw, previous, filter, bpp) {
+  const row = new Uint8Array(raw.length);
+  for (let index = 0; index < raw.length; index += 1) {
+    const left = index >= bpp ? row[index - bpp] : 0;
+    const up = previous[index] || 0;
+    const upperLeft = index >= bpp ? previous[index - bpp] || 0 : 0;
+    let value = raw[index];
+    if (filter === 1) value += left;
+    else if (filter === 2) value += up;
+    else if (filter === 3) value += Math.floor((left + up) / 2);
+    else if (filter === 4) value += paethPredictor(left, up, upperLeft);
+    else if (filter !== 0) throw new Error(`unsupported_png_filter ${filter}`);
+    row[index] = value & 0xff;
+  }
+  return row;
+}
+
+function paethPredictor(left, up, upperLeft) {
+  const p = left + up - upperLeft;
+  const pa = Math.abs(p - left);
+  const pb = Math.abs(p - up);
+  const pc = Math.abs(p - upperLeft);
+  if (pa <= pb && pa <= pc) return left;
+  if (pb <= pc) return up;
+  return upperLeft;
 }
 
 function toCandidateLog(candidate) {
