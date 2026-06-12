@@ -38,6 +38,29 @@
 
 ## 配置 Worker
 
+### 一键部署
+
+如果只想手动输入一次 RunningHub API Key，可以直接运行：
+
+```bash
+npm run deploy:ai-removebg-all
+```
+
+脚本会自动完成：
+
+1. 检查 `package.json`、`runninghub-ai-removebg-worker.js`、`wrangler.ai-removebg.toml` 和 `config.js`。
+2. 如果没有 `node_modules`，自动执行 `npm install`。
+3. 提示输入 RunningHub API Key，并通过 Cloudflare Worker Secret 保存为 `RUNNINGHUB_API_KEY`。
+4. 部署 `runninghub-ai-removebg-worker`。
+5. 自动读取部署后的 Worker URL。
+6. 自动写入 `config.js` 的 `RUNNINGHUB_AI_APP_REMOVE_BG_PROXY_URL`。
+7. 自动执行 `npm run check`。
+8. 输出最终测试链接和下一步测试说明。
+
+API Key 不会写入 `config.js`、`wrangler.ai-removebg.toml` 或任何源码文件。脚本最后会询问是否提交并推送配置变更到 GitHub，只有输入 `y` 才会执行。
+
+### 手动部署
+
 `wrangler.ai-removebg.toml` 已包含：
 
 ```toml

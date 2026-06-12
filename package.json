@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check app.js && node --check runninghub-upscale-worker.js && node --check runninghub-removebg-worker.js && node --check runninghub-ai-removebg-worker.js && node --check scripts/setup-removebg.js && node --check scripts/set-removebg-url.js && node --check scripts/setup-ai-removebg.js && node --check scripts/set-ai-removebg-url.js",
+    "check": "node --check app.js && node --check runninghub-upscale-worker.js && node --check runninghub-removebg-worker.js && node --check runninghub-ai-removebg-worker.js && node --check scripts/setup-removebg.js && node --check scripts/set-removebg-url.js && node --check scripts/setup-ai-removebg.js && node --check scripts/set-ai-removebg-url.js && node --check scripts/deploy-ai-removebg-all.js",
     "check:removebg": "node --check runninghub-removebg-worker.js && node scripts/setup-removebg.js",
     "check:ai-removebg": "node --check runninghub-ai-removebg-worker.js && node scripts/setup-ai-removebg.js",
     "secret:removebg": "wrangler secret put RUNNINGHUB_API_KEY --config wrangler.removebg.toml",
@@ -15,7 +15,8 @@
     "deploy:web": "echo \"GitHub Pages uses repository publishing source\"",
     "deploy:all": "npm run check && npm run deploy:worker && npm run deploy:removebg-worker && npm run deploy:web",
     "set:removebg-url": "node scripts/set-removebg-url.js",
-    "set:ai-removebg-url": "node scripts/set-ai-removebg-url.js"
+    "set:ai-removebg-url": "node scripts/set-ai-removebg-url.js",
+    "deploy:ai-removebg-all": "node scripts/deploy-ai-removebg-all.js"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
