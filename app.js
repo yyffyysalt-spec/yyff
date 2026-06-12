@@ -4280,6 +4280,9 @@ function normalizeRemoveBgResultToOriginalSize(
   const sameSize = rawWidth === originalWidth && rawHeight === originalHeight;
   const returnedHasAlpha = canvasHasAnyTransparency(resultImageOrCanvas);
   const shouldApplyMask = resultType === "mask";
+  const rawResultAlphaBBox = getAlphaBoundingBox(resultImageOrCanvas);
+  let estimatedOriginalSubjectBBox = null;
+  let croppedResult = false;
   let output;
   let normalized = false;
   let normalizeReason = "same-size";
@@ -4295,22 +4298,34 @@ function normalizeRemoveBgResultToOriginalSize(
     output = cloneCanvas(resultImageOrCanvas);
     finalMode = returnedHasAlpha || resultType === "transparent" ? "direct_same_size_transparent" : "fallback_same_size";
   } else {
-    const originalRatio = originalWidth / Math.max(1, originalHeight);
-    const resultRatio = rawWidth / Math.max(1, rawHeight);
-    const ratioDelta = Math.abs(originalRatio - resultRatio) / Math.max(originalRatio, 0.0001);
-    const looksLikeScaledFullFrame = ratioDelta <= 0.035;
+    croppedResult = isCroppedTransparentResult(resultImageOrCanvas, originalCanvas, rawResultAlphaBBox);
+    const looksLikeScaledFullFrame = !croppedResult && isSimilarAspectRatio(rawWidth, rawHeight, originalWidth, originalHeight);
 
     if (looksLikeScaledFullFrame) {
       setStatus?.("正在还原到原图尺寸...");
       normalizeReason = "removebg-only-result-size-mismatch";
       finalMode = resultType === "transparent" || returnedHasAlpha ? "scaled_transparent_to_original" : "scaled_fallback_to_original";
+      output = resizeCanvasTo(resultImageOrCanvas, originalWidth, originalHeight);
     } else {
-      setStatus?.("RunningHub 返回了裁剪结果，已尽量还原到原图尺寸。");
-      normalizeReason = "bbox-or-cropped-result-normalized-to-original";
-      finalMode = resultType === "transparent" || returnedHasAlpha ? "cropped_transparent_scaled_to_original" : "cropped_fallback_scaled_to_original";
+      const placed = placeCroppedResultBackToOriginalCanvas(originalCanvas, resultImageOrCanvas, {
+        resultBBox: rawResultAlphaBBox,
+      });
+      output = placed.canvas;
+      estimatedOriginalSubjectBBox = placed.originalBBox;
+      normalizeReason = placed.reason;
+      finalMode = placed.mode;
+      if (placed.originalBBox) {
+        setStatus?.("正在按原图位置还原抠图结果...");
+      } else {
+        setStatus?.("RunningHub 返回了裁剪结果，无法完全还原原图位置。");
+        console.warn(`[${label}] removebg cropped result could not estimate original subject bbox`, {
+          originalSize: `${originalWidth}x${originalHeight}`,
+          rawResultSize: `${rawWidth}x${rawHeight}`,
+          rawResultAlphaBBox,
+        });
+      }
     }
 
-    output = resizeCanvasTo(resultImageOrCanvas, originalWidth, originalHeight);
     normalized = true;
   }
 
@@ -4318,6 +4333,9 @@ function normalizeRemoveBgResultToOriginalSize(
     originalSize: `${originalWidth}x${originalHeight}`,
     rawResultSize: `${rawWidth}x${rawHeight}`,
     finalResultSize: `${output.width}x${output.height}`,
+    rawResultAlphaBBox,
+    estimatedOriginalSubjectBBox,
+    isCroppedTransparentResult: croppedResult,
     resultType,
     selectedReason,
     returnedHasAlpha,
@@ -4328,6 +4346,212 @@ function normalizeRemoveBgResultToOriginalSize(
   });
 
   return output;
+}
+
+function isSimilarAspectRatio(widthA, heightA, widthB, heightB, limit = 0.035) {
+  const ratioA = widthA / Math.max(1, heightA);
+  const ratioB = widthB / Math.max(1, heightB);
+  return Math.abs(ratioA - ratioB) / Math.max(ratioB, 0.0001) <= limit;
+}
+
+function isCroppedTransparentResult(resultCanvas, originalCanvas, alphaBBox = getAlphaBoundingBox(resultCanvas)) {
+  if (!alphaBBox) return false;
+  if (resultCanvas.width === originalCanvas.width && resultCanvas.height === originalCanvas.height) return false;
+  if (!canvasHasAnyTransparency(resultCanvas)) return false;
+
+  const ratioMismatch = !isSimilarAspectRatio(resultCanvas.width, resultCanvas.height, originalCanvas.width, originalCanvas.height);
+  const edgeMargin = Math.max(3, Math.round(Math.min(resultCanvas.width, resultCanvas.height) * 0.018));
+  const touchesEdge =
+    alphaBBox.x <= edgeMargin ||
+    alphaBBox.y <= edgeMargin ||
+    alphaBBox.x + alphaBBox.width >= resultCanvas.width - edgeMargin ||
+    alphaBBox.y + alphaBBox.height >= resultCanvas.height - edgeMargin;
+  const bboxAreaRatio = (alphaBBox.width * alphaBBox.height) / Math.max(1, resultCanvas.width * resultCanvas.height);
+  const subjectAlmostFillsCanvas = bboxAreaRatio >= 0.82;
+
+  return ratioMismatch || (touchesEdge && bboxAreaRatio >= 0.48) || subjectAlmostFillsCanvas;
+}
+
+function getAlphaBoundingBox(canvas, threshold = 8) {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const alpha = data[(y * width + x) * 4 + 3];
+      if (alpha <= threshold) continue;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
+
+  if (maxX < minX || maxY < minY) return null;
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX + 1,
+    height: maxY - minY + 1,
+  };
+}
+
+function estimateOriginalSubjectBBox(originalCanvas, { tolerance = 36, maxSide = 900 } = {}) {
+  try {
+    const longestSide = Math.max(originalCanvas.width, originalCanvas.height);
+    const scale = longestSide > maxSide ? maxSide / longestSide : 1;
+    const analysisCanvas =
+      scale < 1
+        ? resizeCanvasTo(originalCanvas, Math.round(originalCanvas.width * scale), Math.round(originalCanvas.height * scale))
+        : originalCanvas;
+    const { alphaMask, width, height } = generateMask(analysisCanvas, {
+      matting: "standard",
+      tolerance,
+    });
+    const analysisBBox = getForegroundBoundingBoxFromBackgroundMask(analysisCanvas, alphaMask);
+    if (!analysisBBox) return null;
+
+    const padding = Math.max(1, Math.round(Math.min(width, height) * 0.006));
+    const padded = clampBBox(
+      {
+        x: analysisBBox.x - padding,
+        y: analysisBBox.y - padding,
+        width: analysisBBox.width + padding * 2,
+        height: analysisBBox.height + padding * 2,
+      },
+      width,
+      height,
+    );
+    const reverseScale = 1 / scale;
+    return clampBBox(
+      {
+        x: Math.round(padded.x * reverseScale),
+        y: Math.round(padded.y * reverseScale),
+        width: Math.round(padded.width * reverseScale),
+        height: Math.round(padded.height * reverseScale),
+      },
+      originalCanvas.width,
+      originalCanvas.height,
+    );
+  } catch (error) {
+    console.warn("[RunningHub] estimate original subject bbox failed", error);
+    return null;
+  }
+}
+
+function getForegroundBoundingBoxFromBackgroundMask(canvas, backgroundMask, alphaThreshold = 8) {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const pixel = y * width + x;
+      if (backgroundMask[pixel]) continue;
+      if (data[pixel * 4 + 3] <= alphaThreshold) continue;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
+
+  if (maxX < minX || maxY < minY) return null;
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX + 1,
+    height: maxY - minY + 1,
+  };
+}
+
+function placeCroppedResultBackToOriginalCanvas(originalCanvas, croppedResultCanvas, { resultBBox = null } = {}) {
+  const finalCanvas = document.createElement("canvas");
+  finalCanvas.width = originalCanvas.width;
+  finalCanvas.height = originalCanvas.height;
+  const ctx = finalCanvas.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+
+  const safeResultBBox =
+    resultBBox ||
+    ({
+      x: 0,
+      y: 0,
+      width: croppedResultCanvas.width,
+      height: croppedResultCanvas.height,
+    });
+  const originalBBox = resultBBox ? estimateOriginalSubjectBBox(originalCanvas) : null;
+
+  if (resultBBox && originalBBox) {
+    ctx.drawImage(
+      croppedResultCanvas,
+      resultBBox.x,
+      resultBBox.y,
+      resultBBox.width,
+      resultBBox.height,
+      originalBBox.x,
+      originalBBox.y,
+      originalBBox.width,
+      originalBBox.height,
+    );
+    return {
+      canvas: finalCanvas,
+      originalBBox,
+      resultBBox,
+      mode: "bbox-place-back",
+      reason: "bbox-place-back",
+    };
+  }
+
+  const fitScale = Math.min(
+    1,
+    finalCanvas.width / Math.max(1, safeResultBBox.width),
+    finalCanvas.height / Math.max(1, safeResultBBox.height),
+  );
+  const drawWidth = Math.round(safeResultBBox.width * fitScale);
+  const drawHeight = Math.round(safeResultBBox.height * fitScale);
+  const drawX = Math.round((finalCanvas.width - drawWidth) / 2);
+  const drawY = Math.round((finalCanvas.height - drawHeight) / 2);
+  ctx.drawImage(
+    croppedResultCanvas,
+    safeResultBBox.x,
+    safeResultBBox.y,
+    safeResultBBox.width,
+    safeResultBBox.height,
+    drawX,
+    drawY,
+    drawWidth,
+    drawHeight,
+  );
+
+  return {
+    canvas: finalCanvas,
+    originalBBox: null,
+    resultBBox,
+    mode: "cropped-result-centered-with-original-ratio",
+    reason: "original-subject-bbox-unavailable",
+  };
+}
+
+function clampBBox(bbox, width, height) {
+  const x = Math.max(0, Math.min(width - 1, bbox.x));
+  const y = Math.max(0, Math.min(height - 1, bbox.y));
+  const maxX = Math.max(x, Math.min(width, bbox.x + bbox.width));
+  const maxY = Math.max(y, Math.min(height, bbox.y + bbox.height));
+  return {
+    x,
+    y,
+    width: Math.max(1, maxX - x),
+    height: Math.max(1, maxY - y),
+  };
 }
 
 function applyMaskToOriginalCanvas(originalCanvas, maskCanvas) {
