@@ -4260,36 +4260,73 @@ function restoreRunningHubRemoveBgToOriginal(originalCanvas, cutoutCanvas) {
 }
 
 function resolveRunningHubRemoveBgOutputCanvas(originalCanvas, returnedCanvas, outputResult, { label = "RunningHub", setStatus = null } = {}) {
-  const returnedHasAlpha = canvasHasAnyTransparency(returnedCanvas);
-  const shouldApplyMask = outputResult.resultType === "mask";
-  const shouldUseTransparent = outputResult.resultType === "transparent" || (outputResult.resultType !== "mask" && returnedHasAlpha);
-  console.log(`[${label}] removebg result handling`, {
-    receivedResultType: outputResult.resultType || "",
+  return normalizeRemoveBgResultToOriginalSize(originalCanvas, returnedCanvas, {
+    label,
+    setStatus,
+    resultType: outputResult.resultType || "",
     selectedReason: outputResult.selectedReason || "",
-    returnedHasAlpha,
-    applyMaskToOriginalCanvasCalled: shouldApplyMask,
-    finalMode: shouldApplyMask ? "mask_to_original" : shouldUseTransparent ? "direct_transparent" : "fallback_image",
-    returnedWidth: returnedCanvas.width,
-    returnedHeight: returnedCanvas.height,
-    originalWidth: originalCanvas.width,
-    originalHeight: originalCanvas.height,
   });
+}
+
+function normalizeRemoveBgResultToOriginalSize(
+  originalCanvas,
+  resultImageOrCanvas,
+  { label = "RunningHub", setStatus = null, resultType = "", selectedReason = "" } = {},
+) {
+  const originalWidth = originalCanvas.width;
+  const originalHeight = originalCanvas.height;
+  const rawWidth = resultImageOrCanvas.width;
+  const rawHeight = resultImageOrCanvas.height;
+  const sameSize = rawWidth === originalWidth && rawHeight === originalHeight;
+  const returnedHasAlpha = canvasHasAnyTransparency(resultImageOrCanvas);
+  const shouldApplyMask = resultType === "mask";
+  let output;
+  let normalized = false;
+  let normalizeReason = "same-size";
+  let finalMode = "same_size_result";
 
   if (shouldApplyMask) {
     setStatus?.("正在将 mask 应用到原图...");
-    const output = applyMaskToOriginalCanvas(originalCanvas, returnedCanvas);
-    console.log(`[${label}] final result canvas`, { width: output.width, height: output.height });
-    return output;
+    output = applyMaskToOriginalCanvas(originalCanvas, resultImageOrCanvas);
+    normalized = output.width !== rawWidth || output.height !== rawHeight;
+    normalizeReason = "mask-to-original-size";
+    finalMode = "mask_to_original";
+  } else if (sameSize) {
+    output = cloneCanvas(resultImageOrCanvas);
+    finalMode = returnedHasAlpha || resultType === "transparent" ? "direct_same_size_transparent" : "fallback_same_size";
+  } else {
+    const originalRatio = originalWidth / Math.max(1, originalHeight);
+    const resultRatio = rawWidth / Math.max(1, rawHeight);
+    const ratioDelta = Math.abs(originalRatio - resultRatio) / Math.max(originalRatio, 0.0001);
+    const looksLikeScaledFullFrame = ratioDelta <= 0.035;
+
+    if (looksLikeScaledFullFrame) {
+      setStatus?.("正在还原到原图尺寸...");
+      normalizeReason = "removebg-only-result-size-mismatch";
+      finalMode = resultType === "transparent" || returnedHasAlpha ? "scaled_transparent_to_original" : "scaled_fallback_to_original";
+    } else {
+      setStatus?.("RunningHub 返回了裁剪结果，已尽量还原到原图尺寸。");
+      normalizeReason = "bbox-or-cropped-result-normalized-to-original";
+      finalMode = resultType === "transparent" || returnedHasAlpha ? "cropped_transparent_scaled_to_original" : "cropped_fallback_scaled_to_original";
+    }
+
+    output = resizeCanvasTo(resultImageOrCanvas, originalWidth, originalHeight);
+    normalized = true;
   }
 
-  if (shouldUseTransparent) {
-    setStatus?.("正在使用透明 PNG 结果...");
-    console.log(`[${label}] final result canvas`, { width: returnedCanvas.width, height: returnedCanvas.height });
-    return returnedCanvas;
-  }
+  console.log(`[${label}] removebg result normalization`, {
+    originalSize: `${originalWidth}x${originalHeight}`,
+    rawResultSize: `${rawWidth}x${rawHeight}`,
+    finalResultSize: `${output.width}x${output.height}`,
+    resultType,
+    selectedReason,
+    returnedHasAlpha,
+    applyMaskToOriginalCanvasCalled: shouldApplyMask,
+    normalized,
+    normalizeReason,
+    finalMode,
+  });
 
-  const output = resizeCanvasTo(returnedCanvas, originalCanvas.width, originalCanvas.height);
-  console.log(`[${label}] final result canvas`, { width: output.width, height: output.height });
   return output;
 }
 
