@@ -9,7 +9,7 @@ window.APP_CONFIG = {
     },
   ],
   REMOVE_BG_PROXY_URL: "https://runninghub-removebg-worker.ste611003.workers.dev",
-  RUNNINGHUB_AI_APP_REMOVE_BG_PROXY_URL: "",
+  RUNNINGHUB_AI_APP_REMOVE_BG_PROXY_URL: "https://runninghub-ai-removebg-worker.ste611003.workers.dev",
   RUNNINGHUB_AI_APP_REMOVE_BG_APP_ID: "1950866462321876993",
   RUNNINGHUB_AI_APP_REMOVE_BG_LABEL: "RunningHub AI 抠图",
   REMOVE_BG_MAX_UPLOAD_SIDE: 1280,
