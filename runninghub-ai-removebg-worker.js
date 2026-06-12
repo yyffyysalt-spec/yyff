@@ -65,6 +65,16 @@ async function handleAiRemoveBackgroundRequest(request, env) {
 }
 
 async function createAiRemoveBackgroundTask({ apiKey, appId, imageFieldName, createEndpoint, image }) {
+  if (!createEndpoint) {
+    throw stageError(
+      "ai_app_api_not_configured",
+      "RunningHub AI App API 调用格式未配置",
+      "缺少 createEndpoint 或 AI App 创建任务接口参数",
+      501,
+      { appId },
+    );
+  }
+
   if (!(image instanceof File)) {
     throw stageError("config", "请上传需要抠图的图片", "表单字段 file 或 image 不是文件。", 400);
   }
@@ -673,11 +683,3 @@ function summarizeRaw(data) {
 function logStage(stage, detail = {}) {
   console.log("[RunningHub AI RemoveBG Worker]", { stage, ...detail });
 }
-  if (!createEndpoint) {
-    throw stageError(
-      "ai_app_api_not_configured",
-      "RunningHub AI App API 调用格式未配置，请补充 AI App API 请求参数。",
-      `appId=${appId}，请从 RunningHub AI App 的 API 调用页面复制 create endpoint、图片字段名和输出字段等参数。`,
-      501,
-    );
-  }
