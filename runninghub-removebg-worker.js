@@ -1,6 +1,7 @@
 const RUNNINGHUB_BASE_URL = "https://www.runninghub.ai";
 const DEFAULT_IMAGE_NODE_ID = "3";
 const DEFAULT_IMAGE_FIELD_NAME = "image";
+const DEFAULT_OUTPUT_NODE_ID = "120";
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 const TRANSPARENT_OUTPUT_NODE_IDS = new Set(["114", "120"]);
 const MASK_OUTPUT_NODE_IDS = new Set(["117", "118"]);
@@ -70,14 +71,15 @@ async function createRemoveBackgroundTask({ apiKey, workflowId, imageNodeId, ima
     throw stageError("config", "图片超过 5MB，请先压缩后再使用 RunningHub 抠图", `当前大小：${image.size} bytes`, 413);
   }
 
-  logStage("upload_resource_start", { fileSize: image.size, fileType: image.type || "unknown" });
+  logStage("upload_resource_start", { input_file_size: image.size, fileType: image.type || "unknown" });
   const uploadedFilename = await uploadResource(image, apiKey);
   logStage("upload_resource_done", { filename: uploadedFilename });
 
-  logStage("create_task_start", {
+  logStage("create_task_payload_summary", {
     workflowId,
     imageNodeId,
     imageFieldName,
+    uploadedFilename,
   });
   const taskId = await createTask({
     apiKey,
@@ -116,19 +118,23 @@ async function checkRemoveBackgroundTask({ apiKey, taskId, outputNodeId }) {
     throw stageError("poll_task", getRunningHubMessage(data) || "RunningHub 抠图状态查询失败", `HTTP ${response.status}：${summarizeData(data)}`, 502, data);
   }
   const status = getRunningHubStatus(data);
+  const message = getRunningHubMessage(data);
   const selection = selectTransparentCutoutOutput(data, outputNodeId);
   logStage("runninghub_status", {
     taskId,
     status,
+    runninghub_code: data?.code ?? data?.data?.code ?? "",
+    runninghub_message: message,
+    raw_output_keys: getRawOutputKeys(data),
     candidateCount: selection.candidates.length,
+    configured_output_node_id: outputNodeId || DEFAULT_OUTPUT_NODE_ID,
   });
 
-  if (selection.candidates.length) {
-    logStage("output_candidates", {
-      taskId,
-      candidates: selection.candidates.map(toCandidateLog),
-    });
-  }
+  logStage("output_candidates", {
+    taskId,
+    configured_output_node_id: outputNodeId || DEFAULT_OUTPUT_NODE_ID,
+    candidates: selection.candidates.map(toCandidateLog),
+  });
 
   if (selection.selected) {
     logStage("selected_output", {
@@ -200,7 +206,7 @@ function validateConfig(env) {
   const workflowId = env.RUNNINGHUB_REMOVEBG_WORKFLOW_ID;
   const imageNodeId = env.RUNNINGHUB_REMOVEBG_IMAGE_NODE_ID || DEFAULT_IMAGE_NODE_ID;
   const imageFieldName = env.RUNNINGHUB_REMOVEBG_IMAGE_FIELD_NAME || DEFAULT_IMAGE_FIELD_NAME;
-  const outputNodeId = env.RUNNINGHUB_REMOVEBG_OUTPUT_NODE_ID || "";
+  const outputNodeId = env.RUNNINGHUB_REMOVEBG_OUTPUT_NODE_ID || DEFAULT_OUTPUT_NODE_ID;
 
   if (!apiKey) throw stageError("config", "RunningHub API Key 缺失", "请在 Cloudflare Worker Secret 中配置 RUNNINGHUB_API_KEY。");
   if (!workflowId) {
@@ -422,6 +428,16 @@ function getRunningHubStatus(data) {
   const message = getRunningHubMessage(data);
   if (message) parts.push(`message=${message}`);
   return parts.join(" ") || "unknown";
+}
+
+function getRawOutputKeys(data) {
+  const root = data?.data ?? data;
+  if (!root || typeof root !== "object") return [];
+  const keys = new Set(Object.keys(root));
+  ["outputs", "output", "images", "files", "result", "results"].forEach((key) => {
+    if (root?.[key] !== undefined) keys.add(key);
+  });
+  return [...keys].slice(0, 40);
 }
 
 function stageError(stage, message, detail = "", status = 500, raw = undefined) {

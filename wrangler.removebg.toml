@@ -4,6 +4,7 @@ compatibility_date = "2026-06-11"
 
 [vars]
 # Fill this with the real RunningHub RMBG-2.0 remove-background workflow id before deployment.
-RUNNINGHUB_REMOVEBG_WORKFLOW_ID = ""
+RUNNINGHUB_REMOVEBG_WORKFLOW_ID = "1942841406140387330"
 RUNNINGHUB_REMOVEBG_IMAGE_NODE_ID = "3"
 RUNNINGHUB_REMOVEBG_IMAGE_FIELD_NAME = "image"
+RUNNINGHUB_REMOVEBG_OUTPUT_NODE_ID = "120"

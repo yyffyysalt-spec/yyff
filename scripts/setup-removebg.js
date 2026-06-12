@@ -51,6 +51,7 @@ if (exists("wrangler.removebg.toml")) {
   const workflowId = readTomlString(wrangler, "RUNNINGHUB_REMOVEBG_WORKFLOW_ID");
   const nodeId = readTomlString(wrangler, "RUNNINGHUB_REMOVEBG_IMAGE_NODE_ID");
   const fieldName = readTomlString(wrangler, "RUNNINGHUB_REMOVEBG_IMAGE_FIELD_NAME");
+  const outputNodeId = readTomlString(wrangler, "RUNNINGHUB_REMOVEBG_OUTPUT_NODE_ID");
 
   record(
     Boolean(workflowId),
@@ -69,6 +70,12 @@ if (exists("wrangler.removebg.toml")) {
     "RUNNINGHUB_REMOVEBG_IMAGE_FIELD_NAME = image",
     `RUNNINGHUB_REMOVEBG_IMAGE_FIELD_NAME 应为 image，当前为 ${fieldName || "未配置"}`,
     "请把 wrangler.removebg.toml 里的 RUNNINGHUB_REMOVEBG_IMAGE_FIELD_NAME 设置为 \"image\"。",
+  );
+  record(
+    outputNodeId === "120",
+    "RUNNINGHUB_REMOVEBG_OUTPUT_NODE_ID = 120",
+    `RUNNINGHUB_REMOVEBG_OUTPUT_NODE_ID 应为 120，当前为 ${outputNodeId || "未配置"}`,
+    "请在 wrangler.removebg.toml 中添加 RUNNINGHUB_REMOVEBG_OUTPUT_NODE_ID = \"120\"。",
   );
 }
 

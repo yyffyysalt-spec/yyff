@@ -9,6 +9,9 @@ window.APP_CONFIG = {
     },
   ],
   REMOVE_BG_PROXY_URL: "https://runninghub-removebg-worker.ste611003.workers.dev",
+  REMOVE_BG_MAX_UPLOAD_SIDE: 1280,
+  REMOVE_BG_MAX_POLL_COUNT: 80,
+  REMOVE_BG_POLL_INTERVAL_MS: 3000,
   REMOVE_BG_WORKFLOWS: [
     {
       id: "rmbg20",
