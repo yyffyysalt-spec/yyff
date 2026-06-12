@@ -335,10 +335,120 @@ async function createAiAppTask({ apiKey, createEndpoint, nodeInfoList }) {
     body: JSON.stringify({ nodeInfoList }),
   });
   const data = await readRunningHubJson(response, "create_task", "RunningHub AI App 创建抠图任务失败");
-  const taskId = data?.data?.taskId || data?.data?.task_id || data?.data?.id;
+  const taskIdInfo = extractTaskIdFromCreateResponse(data);
+  logStage("create_task_response_summary", {
+    create_response_raw_type: Array.isArray(data) ? "array" : typeof data,
+    create_response_top_level_keys: data && typeof data === "object" && !Array.isArray(data) ? Object.keys(data).slice(0, 40) : [],
+    detail_is_json_string: taskIdInfo.detailIsJsonString,
+    task_id_candidates: taskIdInfo.candidates,
+    extracted_task_id: taskIdInfo.taskId,
+  });
 
-  if (!taskId) throw stageError("create_task", "RunningHub AI App 创建抠图任务成功但没有返回 taskId", summarizeData(data));
-  return taskId;
+  if (!taskIdInfo.taskId) throw stageError("create_task", "RunningHub AI App 创建抠图任务成功但没有返回 taskId", summarizeData(data));
+  return taskIdInfo.taskId;
+}
+
+function extractTaskIdFromCreateResponse(raw) {
+  const state = {
+    candidates: [],
+    visited: new WeakSet(),
+    detailIsJsonString: false,
+  };
+  const parsedRaw = parseJsonStringIfPossible(raw, "root", state);
+  scanTaskIdCandidate(parsedRaw, "$", state);
+
+  const taskFieldCandidate = state.candidates.find((candidate) => candidate.priority === 1);
+  const idFallbackCandidate = state.candidates.find((candidate) => candidate.priority === 2);
+  const regexCandidate = state.candidates.find((candidate) => candidate.priority === 3);
+  const selected = taskFieldCandidate || idFallbackCandidate || regexCandidate;
+
+  return {
+    taskId: selected?.value || "",
+    candidates: state.candidates.map(({ path, key, value, source }) => ({ path, key, value, source })),
+    detailIsJsonString: state.detailIsJsonString,
+  };
+}
+
+function scanTaskIdCandidate(value, path, state) {
+  const parsed = parseJsonStringIfPossible(value, path, state);
+  if (parsed !== value) {
+    scanTaskIdCandidate(parsed, `${path}{json}`, state);
+    return;
+  }
+
+  if (typeof value === "string") {
+    addRegexTaskIdCandidates(value, path, state);
+    return;
+  }
+
+  if (!value || typeof value !== "object") return;
+  if (state.visited.has(value)) return;
+  state.visited.add(value);
+
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => scanTaskIdCandidate(item, `${path}[${index}]`, state));
+    return;
+  }
+
+  for (const [key, child] of Object.entries(value)) {
+    if (isTaskIdKey(key) && child !== undefined && child !== null && child !== "") {
+      state.candidates.push({
+        path: `${path}.${key}`,
+        key,
+        value: String(child),
+        source: "task_field",
+        priority: 1,
+      });
+    } else if (key === "id" && child !== undefined && child !== null && child !== "") {
+      state.candidates.push({
+        path: `${path}.${key}`,
+        key,
+        value: String(child),
+        source: "id_fallback",
+        priority: 2,
+      });
+    }
+    scanTaskIdCandidate(child, `${path}.${key}`, state);
+  }
+}
+
+function isTaskIdKey(key) {
+  return ["taskId", "task_id", "taskID"].includes(String(key));
+}
+
+function parseJsonStringIfPossible(value, path, state) {
+  if (typeof value !== "string") return value;
+  const text = value.trim();
+  if (!looksLikeJson(text)) {
+    addRegexTaskIdCandidates(text, path, state);
+    return value;
+  }
+  try {
+    const parsed = JSON.parse(text);
+    if (/\.detail$/i.test(path)) state.detailIsJsonString = true;
+    return parsed;
+  } catch (error) {
+    addRegexTaskIdCandidates(text, path, state);
+    return value;
+  }
+}
+
+function looksLikeJson(text) {
+  return Boolean(text && ((text.startsWith("{") && text.endsWith("}")) || (text.startsWith("[") && text.endsWith("]")) || (text.startsWith('"') && text.endsWith('"'))));
+}
+
+function addRegexTaskIdCandidates(text, path, state) {
+  const pattern = /"taskId"\s*:\s*"([^"]+)"/g;
+  let match;
+  while ((match = pattern.exec(text))) {
+    state.candidates.push({
+      path,
+      key: "taskId",
+      value: match[1],
+      source: "regex_fallback",
+      priority: 3,
+    });
+  }
 }
 
 function getEndpointOrigin(endpoint) {
