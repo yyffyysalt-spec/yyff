@@ -25,11 +25,53 @@
     <meta name="twitter:image" content="https://yyffyysalt-spec.github.io/yyff/assets/og-cover.png" />
     <meta name="twitter:image:alt" content="批量抠图 + 高清放大工具预览图" />
     <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./styles.css?v=20260615-video-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260615-home-1" />
   </head>
   <body>
-    <main class="app-shell">
-      <section class="workspace">
+    <main class="app-shell is-home" id="appShell">
+      <section class="home-view" id="homeView" aria-label="首页入口">
+        <div class="home-orb home-orb-a" aria-hidden="true"></div>
+        <div class="home-orb home-orb-b" aria-hidden="true"></div>
+        <section class="home-hero">
+          <p class="home-eyebrow">MADE IN 37</p>
+          <h1>批量抠图 + 高清放大</h1>
+          <p class="home-subtitle">图片与视频的 AI 后期处理工具箱</p>
+          <div class="home-entry-grid" aria-label="选择处理类型">
+            <button class="home-entry-card" type="button" data-home-entry="image">
+              <span class="home-entry-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z"/><path d="m8 16 3.2-4 2.3 2.8L15 13l3 3"/><circle cx="9" cy="9" r="1.2"/></svg>
+              </span>
+              <span class="home-entry-title">图片处理</span>
+              <span class="home-entry-copy">抠图、高清放大、压缩与批量导出</span>
+            </button>
+            <button class="home-entry-card" type="button" data-home-entry="video">
+              <span class="home-entry-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M4 6h11a3 3 0 0 1 3 3v1l3-2v8l-3-2v1a3 3 0 0 1-3 3H4V6Z"/><path d="M8 10v4l4-2-4-2Z"/></svg>
+              </span>
+              <span class="home-entry-title">视频处理</span>
+              <span class="home-entry-copy">视频高清放大、绿幕抠像与 AI 工作流</span>
+            </button>
+          </div>
+        </section>
+      </section>
+
+      <nav class="side-rail" id="sideRail" aria-label="功能导航" hidden>
+        <div class="side-rail-grip" aria-hidden="true"></div>
+        <button class="side-rail-item is-active" type="button" data-module-tab="image" aria-current="page" title="图片处理">
+          <span class="side-rail-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z"/><path d="m8 16 3.2-4 2.3 2.8L15 13l3 3"/><circle cx="9" cy="9" r="1.2"/></svg>
+          </span>
+          <span class="side-rail-label">图片处理</span>
+        </button>
+        <button class="side-rail-item" type="button" data-module-tab="video" title="视频处理">
+          <span class="side-rail-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M4 6h11a3 3 0 0 1 3 3v1l3-2v8l-3-2v1a3 3 0 0 1-3 3H4V6Z"/><path d="M8 10v4l4-2-4-2Z"/></svg>
+          </span>
+          <span class="side-rail-label">视频处理</span>
+        </button>
+      </nav>
+
+      <section class="workspace" id="workspaceShell" hidden>
         <aside class="panel tools-panel sidebar-panel" aria-label="处理设置">
           <div class="brand-row">
             <div>
@@ -39,17 +81,6 @@
             </div>
             <span class="status-pill" id="queueStatus">待上传</span>
           </div>
-
-          <nav class="module-switcher" aria-label="功能模块">
-            <button class="module-tab is-active" type="button" data-module-tab="image">
-              <span>图片处理</span>
-              <small>抠图 / 放大 / 压缩</small>
-            </button>
-            <button class="module-tab" type="button" data-module-tab="video">
-              <span>视频处理</span>
-              <small>高清放大 / 抠绿幕</small>
-            </button>
-          </nav>
 
           <section class="module-panel image-module is-active" id="imageControls" data-module-panel="image" aria-label="图片处理参数">
           <div class="control-group">
@@ -209,6 +240,7 @@
               <span class="drop-title">选择或拖入视频</span>
               <span class="drop-copy">支持 MP4、MOV、WEBM。视频较大时 RunningHub 处理会更久。</span>
             </label>
+            <p class="video-config-notice" id="videoConfigNotice">视频 RunningHub 工作流未配置，请先补充 workflowId 和节点参数。</p>
 
             <div class="control-group">
               <span class="control-label">视频处理模式</span>
@@ -651,7 +683,7 @@
       </div>
     </dialog>
 
-    <script src="./config.js?v=20260615-video-1"></script>
-    <script src="./app.js?v=20260615-video-1"></script>
+    <script src="./config.js?v=20260615-home-1"></script>
+    <script src="./app.js?v=20260615-home-1"></script>
   </body>
 </html>

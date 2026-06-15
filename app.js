@@ -1,7 +1,7 @@
 const state = {
   items: [],
   isProcessing: false,
-  activeModule: "image",
+  activeModule: "home",
 };
 
 const videoState = {
@@ -19,6 +19,11 @@ const compressorState = {
 };
 
 const els = {
+  appShell: document.querySelector("#appShell"),
+  homeView: document.querySelector("#homeView"),
+  workspaceShell: document.querySelector("#workspaceShell"),
+  sideRail: document.querySelector("#sideRail"),
+  homeEntryButtons: document.querySelectorAll("[data-home-entry]"),
   fileInput: document.querySelector("#fileInput"),
   dropZone: document.querySelector("#dropZone"),
   mainWorkspace: document.querySelector("#mainWorkspace"),
@@ -87,6 +92,7 @@ const els = {
   videoChromaToleranceSelect: document.querySelector("#videoChromaToleranceSelect"),
   videoChromaFeatherSelect: document.querySelector("#videoChromaFeatherSelect"),
   videoSpillToggle: document.querySelector("#videoSpillToggle"),
+  videoConfigNotice: document.querySelector("#videoConfigNotice"),
   videoPreviewModal: document.querySelector("#videoPreviewModal"),
   videoPreviewPlayer: document.querySelector("#videoPreviewPlayer"),
   videoPreviewTitle: document.querySelector("#videoPreviewTitle"),
@@ -307,6 +313,9 @@ initializeVideoWorkflowOptions();
 els.moduleTabs.forEach((button) => {
   button.addEventListener("click", () => setActiveModule(button.dataset.moduleTab || "image"));
 });
+els.homeEntryButtons.forEach((button) => {
+  button.addEventListener("click", () => setActiveModule(button.dataset.homeEntry || "image"));
+});
 els.toleranceRange.addEventListener("input", () => {
   els.toleranceOutput.value = els.toleranceRange.value;
 });
@@ -391,6 +400,7 @@ setCompressionPanelExpanded(false);
 updateCompressionQualityControls();
 initializeCustomSelects();
 syncCustomSelects();
+setActiveModule("home");
 
 els.fileInput.addEventListener("change", (event) => {
   addFiles([...event.target.files]);
@@ -5859,14 +5869,20 @@ function resetResultCanvas(item) {
 }
 
 function setActiveModule(moduleName) {
-  state.activeModule = moduleName === "video" ? "video" : "image";
+  const nextModule = moduleName === "video" ? "video" : moduleName === "home" ? "home" : "image";
+  state.activeModule = nextModule;
+  document.body.dataset.view = nextModule;
+  els.appShell?.classList.toggle("is-home", nextModule === "home");
+  if (els.homeView) els.homeView.hidden = nextModule !== "home";
+  if (els.workspaceShell) els.workspaceShell.hidden = nextModule === "home";
+  if (els.sideRail) els.sideRail.hidden = nextModule === "home";
   els.moduleTabs.forEach((button) => {
-    const active = button.dataset.moduleTab === state.activeModule;
+    const active = nextModule !== "home" && button.dataset.moduleTab === nextModule;
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-current", active ? "page" : "false");
   });
   els.modulePanels.forEach((panel) => {
-    const active = panel.dataset.modulePanel === state.activeModule;
+    const active = nextModule !== "home" && panel.dataset.modulePanel === nextModule;
     panel.hidden = !active;
     panel.classList.toggle("is-active", active);
   });
@@ -5878,17 +5894,24 @@ function updateVideoOptionVisibility() {
   const mode = getSelectedVideoMode();
   const needsUpscale = mode === "video-upscale" || mode === "video-chroma-upscale";
   const needsChroma = mode === "video-chroma" || mode === "video-chroma-upscale";
+  const missingUpscaleConfig = needsUpscale && !VIDEO_UPSCALE_PROXY_URL;
+  const missingChromaConfig = needsChroma && !VIDEO_CHROMA_PROXY_URL;
   document.querySelectorAll('[data-video-option="video-upscale-model"]').forEach((element) => {
     element.hidden = !needsUpscale;
   });
   document.querySelectorAll('[data-video-option="video-chroma-model"], [data-video-option="chroma-params"]').forEach((element) => {
     element.hidden = !needsChroma;
   });
+  if (els.videoConfigNotice) {
+    els.videoConfigNotice.hidden = !(missingUpscaleConfig || missingChromaConfig);
+  }
 }
 
 function updateUi() {
   const total = state.items.length;
   const completed = state.items.filter((item) => item.blob).length;
+  const activeHome = state.activeModule === "home";
+  const activeImage = state.activeModule === "image";
   const activeVideo = state.activeModule === "video";
   state.items.forEach((item) => {
     item.deleteButton.disabled = state.isProcessing;
@@ -5897,12 +5920,15 @@ function updateUi() {
   videoState.items.forEach((item) => {
     item.deleteButton.disabled = videoState.isProcessing;
   });
+  if (els.homeView) els.homeView.hidden = !activeHome;
+  if (els.workspaceShell) els.workspaceShell.hidden = activeHome;
+  if (els.sideRail) els.sideRail.hidden = activeHome;
   els.emptyState.classList.toggle("is-hidden", total > 0);
   els.mainWorkspace.classList.toggle("has-items", total > 0);
-  els.mainWorkspace.hidden = activeVideo;
+  els.mainWorkspace.hidden = !activeImage;
   els.videoWorkspace.hidden = !activeVideo;
-  els.uploadMoreButton.hidden = activeVideo;
-  els.compressPanel.hidden = activeVideo;
+  els.uploadMoreButton.hidden = !activeImage;
+  els.compressPanel.hidden = !activeImage;
   const missingPixianCredentials = total > 0 && needsPixianCredentials() && !hasPixianCredentials();
   const missingKoukoutuCredentials = total > 0 && needsKoukoutuCredentials() && !hasKoukoutuCredentials();
   const missingApiCredentials = missingPixianCredentials || missingKoukoutuCredentials;
@@ -5927,7 +5953,7 @@ function updateUi() {
     els.hintText.textContent = videoState.items.length
       ? "视频任务会在这里显示 RunningHub 处理进度、taskId、预览与下载。"
       : "上传视频后会在这里显示首帧、信息与处理结果。";
-  } else {
+  } else if (activeImage) {
     els.stageTitle.textContent = "图片任务";
     els.hintText.textContent = missingApiCredentials
     ? missingKoukoutuCredentials
@@ -5936,6 +5962,9 @@ function updateUi() {
     : total
       ? "调整左侧参数后可以重新处理，结果会覆盖当前预览。"
       : "上传图片后会在这里显示原图与处理结果。";
+  } else {
+    els.stageTitle.textContent = "任务列表";
+    els.hintText.textContent = "选择首页入口后开始处理。";
   }
   updateProgress(completed, total);
 }
