@@ -211,6 +211,7 @@ let previewOriginalUrl = null;
 let previewItem = null;
 let previewMode = "result";
 let previewViewMode = "result";
+let previewCanCompare = false;
 let compareLayoutFrame = 0;
 let isPreviewCropping = false;
 let previewCropRect = null;
@@ -1327,6 +1328,8 @@ function createItem(file, url, bitmap) {
     durationMs: null,
     durationState: "",
     runninghubTaskId: "",
+    canCompare: false,
+    previewStrategy: "result-only",
     outputName: makeOutputName(file.name),
   };
 
@@ -1374,6 +1377,9 @@ async function processQueue() {
     item.blob = null;
     item.editorSubjectCanvas = null;
     item.editorBackgroundColor = null;
+    item.canCompare = false;
+    item.previewStrategy = "result-only";
+    item.previewCompareReason = "";
     item.cancelRequested = false;
     item.abortController = new AbortController();
     item.runninghubTaskId = "";
@@ -1407,6 +1413,7 @@ async function processQueue() {
       await nextFrame();
       const outputCanvas = await processItem(item, options);
       if (item.cancelRequested) throw createCanceledTaskError();
+      updateItemPreviewStrategy(item, options, outputCanvas);
       copyCanvas(outputCanvas, item.resultCanvas);
       item.blob = await canvasToBlob(outputCanvas);
       setItemCancelable(item, false);
@@ -1458,7 +1465,8 @@ function openPreview(item, { mode = item.resultCanvas ? "result" : "compress" } 
   previewMode = mode;
   const isOriginalPreview = mode === "original";
   const isCompressionPreview = mode === "compress";
-  const canCompare = mode === "result" && Boolean(item.url && item.blob);
+  const canCompare = mode === "result" && canUseItemComparePreview(item);
+  previewCanCompare = canCompare;
   const width = isOriginalPreview ? item.bitmap?.width || 0 : item.resultCanvas?.width ?? item.width ?? 0;
   const height = isOriginalPreview ? item.bitmap?.height || 0 : item.resultCanvas?.height ?? item.height ?? 0;
 
@@ -1496,6 +1504,7 @@ function clearPreviewModal() {
   previewItem = null;
   previewMode = "result";
   previewViewMode = "result";
+  previewCanCompare = false;
   setPreviewCropControls(false);
   els.previewImage.removeAttribute("src");
   els.compareOriginalImage.removeAttribute("src");
@@ -1507,8 +1516,9 @@ function clearPreviewModal() {
 }
 
 function setPreviewViewMode(mode) {
-  previewViewMode = mode;
-  const isCompare = mode === "compare" && previewMode === "result" && Boolean(previewOriginalUrl && previewUrl);
+  const requestedCompare = mode === "compare";
+  const isCompare = requestedCompare && previewMode === "result" && previewCanCompare && Boolean(previewOriginalUrl && previewUrl);
+  previewViewMode = isCompare ? "compare" : "result";
   els.previewResultModeButton.classList.toggle("is-active", !isCompare);
   els.previewCompareModeButton.classList.toggle("is-active", isCompare);
   els.previewCompareView.hidden = !isCompare;
@@ -1539,23 +1549,12 @@ function scheduleCompareLayout() {
 
 function updateCompareLayout() {
   if (!previewItem || previewViewMode !== "compare" || els.previewCompareView.hidden) return;
-  const hostWidth = els.previewCompareView.clientWidth;
-  const hostHeight = els.previewCompareView.clientHeight;
   const imageWidth = previewItem.bitmap?.width || els.compareOriginalImage.naturalWidth || previewItem.resultCanvas?.width || 1;
   const imageHeight = previewItem.bitmap?.height || els.compareOriginalImage.naturalHeight || previewItem.resultCanvas?.height || 1;
-  if (!hostWidth || !hostHeight || !imageWidth || !imageHeight) return;
-  const scale = Math.min(hostWidth / imageWidth, hostHeight / imageHeight);
-  const displayWidth = Math.max(1, Math.round(imageWidth * scale));
-  const displayHeight = Math.max(1, Math.round(imageHeight * scale));
-  const displayX = Math.round((hostWidth - displayWidth) / 2);
-  const displayY = Math.round((hostHeight - displayHeight) / 2);
+  if (!imageWidth || !imageHeight) return;
   const ratio = Math.min(1, Math.max(0, Number(els.compareSlider.value || 50) / 100));
-  els.previewCompareView.style.setProperty("--compare-x", `${displayX}px`);
-  els.previewCompareView.style.setProperty("--compare-y", `${displayY}px`);
-  els.previewCompareView.style.setProperty("--compare-width", `${displayWidth}px`);
-  els.previewCompareView.style.setProperty("--compare-height", `${displayHeight}px`);
-  els.previewCompareView.style.setProperty("--compare-clip-left", `${ratio * 100}%`);
-  els.previewCompareView.style.setProperty("--compare-divider-left", `${displayX + displayWidth * ratio}px`);
+  els.previewCompareView.style.setProperty("--compare-aspect", `${imageWidth} / ${imageHeight}`);
+  els.previewCompareView.style.setProperty("--compare-position", `${ratio * 100}%`);
 }
 
 function setPreviewCropControls(canCrop) {
@@ -1568,6 +1567,48 @@ function setPreviewCropControls(canCrop) {
   previewCropRect = null;
   previewCropBounds = null;
   previewCropDrag = null;
+}
+
+function updateItemPreviewStrategy(item, options, outputCanvas) {
+  const originalWidth = item.bitmap?.width || 0;
+  const originalHeight = item.bitmap?.height || 0;
+  const resultWidth = outputCanvas?.width || 0;
+  const resultHeight = outputCanvas?.height || 0;
+  const aspectMatches =
+    originalWidth > 0 &&
+    originalHeight > 0 &&
+    resultWidth > 0 &&
+    resultHeight > 0 &&
+    isSimilarAspectRatio(resultWidth, resultHeight, originalWidth, originalHeight, 0.01);
+  const isRunningHubAi = options.removeBgProvider === "runninghub-ai-app";
+  const isSameCanvas = resultWidth === originalWidth && resultHeight === originalHeight;
+  const compareSafe =
+    aspectMatches &&
+    outputCanvas?.previewCompareSafe !== false &&
+    (!isRunningHubAi || (isSameCanvas && outputCanvas?.previewCompareSafe === true));
+
+  item.canCompare = compareSafe;
+  item.previewStrategy = compareSafe ? "before-after" : "result-only";
+  item.previewCompareReason = compareSafe
+    ? outputCanvas?.previewNormalizeMode || "same-coordinate-preview"
+    : isRunningHubAi
+      ? outputCanvas?.previewNormalizeMode || "runninghub-ai-compare-disabled"
+      : "result-size-or-aspect-mismatch";
+
+  console.log("[Preview] task preview strategy", {
+    file: item.file?.name || item.outputName,
+    provider: options.removeBgProvider,
+    mode: options.mode,
+    originalSize: `${originalWidth}x${originalHeight}`,
+    resultSize: `${resultWidth}x${resultHeight}`,
+    canCompare: item.canCompare,
+    previewStrategy: item.previewStrategy,
+    reason: item.previewCompareReason,
+  });
+}
+
+function canUseItemComparePreview(item) {
+  return Boolean(item?.url && item?.blob && item?.canCompare);
 }
 
 async function startPreviewCrop() {
@@ -4399,6 +4440,13 @@ function normalizeRemoveBgResultToOriginalSize(
     placementMode: finalMode,
   });
 
+  output.previewNormalizeMode = finalMode;
+  output.previewCompareSafe =
+    finalMode === "mask_to_original" ||
+    finalMode === "direct_same_size_transparent" ||
+    finalMode === "fallback_same_size" ||
+    (!resultMayBeCropped && (finalMode === "scaled_transparent_to_original" || finalMode === "scaled_fallback_to_original"));
+
   return output;
 }
 
@@ -5142,6 +5190,9 @@ function getUpscaleStatusLabel(options) {
 
 function resetResultCanvas(item) {
   item.resultCanvas.classList.remove("is-previewable");
+  item.canCompare = false;
+  item.previewStrategy = "result-only";
+  item.previewCompareReason = "";
   item.resultCanvas.width = 1;
   item.resultCanvas.height = 1;
   const ctx = item.resultCanvas.getContext("2d");
