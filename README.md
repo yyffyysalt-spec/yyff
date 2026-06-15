@@ -52,6 +52,26 @@ https://young-art-be70.ste611003.workers.dev
 
 部署步骤见：[docs/deploy-runninghub.md](docs/deploy-runninghub.md)。
 
+## RunningHub 视频处理部署
+
+新版页面新增了 `视频处理` 模块，包含：
+
+- RunningHub 视频高清放大
+- RunningHub 视频抠绿幕
+- 抠绿幕 + 放大的组合链路
+
+视频 Worker 使用两阶段任务模式：前端创建任务后立即拿到 `taskId`，再每 3 秒查询一次状态，避免 Cloudflare Worker 长轮询超限。真实 workflowId、输入节点和输出节点需要从 RunningHub 工作流 API 页面复制到 Wrangler 配置里。
+
+常用命令：
+
+```bash
+npm run deploy:video-upscale-worker
+npm run deploy:video-chroma-worker
+npm run verify:video-workers
+```
+
+部署步骤见：[docs/deploy-runninghub-video.md](docs/deploy-runninghub-video.md)。
+
 ## RunningHub RMBG-2.0 高质量抠图部署
 
 `RMBG-2.0 高质量抠图` 通过独立 Cloudflare Worker 中转 RunningHub 抠图工作流，默认输出透明 PNG。

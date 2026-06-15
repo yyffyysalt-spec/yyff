@@ -1,6 +1,12 @@
 const state = {
   items: [],
   isProcessing: false,
+  activeModule: "image",
+};
+
+const videoState = {
+  items: [],
+  isProcessing: false,
 };
 
 const compressorState = {
@@ -56,11 +62,37 @@ const els = {
   compressDownloadButton: document.querySelector("#compressDownloadButton"),
   compressStatus: document.querySelector("#compressStatus"),
   compressToggleButton: document.querySelector("#compressToggleButton"),
+  compressPanel: document.querySelector(".compress-panel"),
   compressBody: document.querySelector("#compressBody"),
   compressQualitySizes: document.querySelectorAll("[data-quality-size]"),
   compressPreviewCard: document.querySelector("#compressPreviewCard"),
   compressPreviewImage: document.querySelector("#compressPreviewImage"),
   template: document.querySelector("#imageCardTemplate"),
+  moduleTabs: document.querySelectorAll("[data-module-tab]"),
+  modulePanels: document.querySelectorAll("[data-module-panel]"),
+  stageTitle: document.querySelector("#stageTitle"),
+  videoFileInput: document.querySelector("#videoFileInput"),
+  videoWorkspaceInput: document.querySelector("#videoWorkspaceInput"),
+  videoDropZone: document.querySelector("#videoDropZone"),
+  videoWorkspace: document.querySelector("#videoWorkspace"),
+  videoGrid: document.querySelector("#videoGrid"),
+  videoTemplate: document.querySelector("#videoCardTemplate"),
+  videoProcessButton: document.querySelector("#videoProcessButton"),
+  videoDownloadButton: document.querySelector("#videoDownloadButton"),
+  videoClearButton: document.querySelector("#videoClearButton"),
+  videoUpscaleSelect: document.querySelector("#videoUpscaleSelect"),
+  videoChromaSelect: document.querySelector("#videoChromaSelect"),
+  videoKeyColorInput: document.querySelector("#videoKeyColorInput"),
+  videoKeyColorText: document.querySelector("#videoKeyColorText"),
+  videoChromaToleranceSelect: document.querySelector("#videoChromaToleranceSelect"),
+  videoChromaFeatherSelect: document.querySelector("#videoChromaFeatherSelect"),
+  videoSpillToggle: document.querySelector("#videoSpillToggle"),
+  videoPreviewModal: document.querySelector("#videoPreviewModal"),
+  videoPreviewPlayer: document.querySelector("#videoPreviewPlayer"),
+  videoPreviewTitle: document.querySelector("#videoPreviewTitle"),
+  videoPreviewMeta: document.querySelector("#videoPreviewMeta"),
+  videoPreviewDownloadButton: document.querySelector("#videoPreviewDownloadButton"),
+  videoPreviewCloseButton: document.querySelector("#videoPreviewCloseButton"),
   previewModal: document.querySelector("#previewModal"),
   previewImage: document.querySelector("#previewImage"),
   previewCompareView: document.querySelector("#previewCompareView"),
@@ -177,6 +209,22 @@ const RUNNINGHUB_REMOVEBG_MAX_SOURCE_SIDE = 1280;
 const RUNNINGHUB_REMOVEBG_MAX_UPLOAD_BYTES_HINT = ONE_MB;
 const RUNNINGHUB_REMOVEBG_POLL_INTERVAL_MS = getPositiveConfigNumber("REMOVE_BG_POLL_INTERVAL_MS", 3000);
 const RUNNINGHUB_REMOVEBG_MAX_POLLS = getPositiveConfigNumber("REMOVE_BG_MAX_POLL_COUNT", 80);
+const VIDEO_UPSCALE_PROXY_URL = APP_CONFIG.VIDEO_UPSCALE_PROXY_URL || "";
+const VIDEO_CHROMA_PROXY_URL = APP_CONFIG.VIDEO_CHROMA_PROXY_URL || "";
+const VIDEO_UPSCALE_WORKFLOWS = normalizeVideoWorkflows(APP_CONFIG.VIDEO_UPSCALE_WORKFLOWS, {
+  id: "runninghub-video-upscale",
+  label: "RunningHub 视频高清放大",
+  provider: "runninghub",
+  default: true,
+});
+const VIDEO_CHROMA_WORKFLOWS = normalizeVideoWorkflows(APP_CONFIG.VIDEO_CHROMA_WORKFLOWS, {
+  id: "runninghub-video-chroma",
+  label: "RunningHub 视频抠绿幕",
+  provider: "runninghub",
+  default: true,
+});
+const VIDEO_POLL_INTERVAL_MS = getPositiveConfigNumber("VIDEO_POLL_INTERVAL_MS", 3000);
+const VIDEO_MAX_POLLS = getPositiveConfigNumber("VIDEO_MAX_POLL_COUNT", 120);
 const UPSCALE_PROVIDERS = {
   "canvas-resize": {
     label: "普通放大",
@@ -213,6 +261,7 @@ const COMPRESSION_FALLBACK_MIMES = ["image/jpeg", "image/png"];
 let previewUrl = null;
 let previewOriginalUrl = null;
 let previewItem = null;
+let videoPreviewItem = null;
 let previewMode = "result";
 let previewViewMode = "result";
 let previewCanCompare = false;
@@ -253,7 +302,11 @@ const customSelects = new Map();
 
 initializeRemoveBgModelOptions();
 initializeUpscaleProviderOptions();
+initializeVideoWorkflowOptions();
 
+els.moduleTabs.forEach((button) => {
+  button.addEventListener("click", () => setActiveModule(button.dataset.moduleTab || "image"));
+});
 els.toleranceRange.addEventListener("input", () => {
   els.toleranceOutput.value = els.toleranceRange.value;
 });
@@ -295,6 +348,19 @@ els.upscaleProviderSelect.addEventListener("change", () => {
   updateSelectTitle(els.upscaleProviderSelect);
   updateUi();
 });
+els.videoUpscaleSelect.addEventListener("change", () => updateSelectTitle(els.videoUpscaleSelect));
+els.videoChromaSelect.addEventListener("change", () => updateSelectTitle(els.videoChromaSelect));
+els.videoChromaToleranceSelect.addEventListener("change", () => updateSelectTitle(els.videoChromaToleranceSelect));
+els.videoChromaFeatherSelect.addEventListener("change", () => updateSelectTitle(els.videoChromaFeatherSelect));
+els.videoKeyColorInput.addEventListener("input", () => {
+  els.videoKeyColorText.textContent = els.videoKeyColorInput.value;
+});
+document.querySelectorAll('input[name="videoMode"]').forEach((input) => {
+  input.addEventListener("change", () => {
+    updateVideoOptionVisibility();
+    updateUi();
+  });
+});
 document.querySelectorAll('input[name="mode"]').forEach((input) => {
   input.addEventListener("change", () => {
     updateOptionVisibility();
@@ -319,6 +385,7 @@ els.koukoutuCheckCreditsButton.addEventListener("click", checkKoukoutuCredits);
 loadPixianCredentials();
 loadKoukoutuCredentials();
 updateOptionVisibility();
+updateVideoOptionVisibility();
 updateApiControls();
 setCompressionPanelExpanded(false);
 updateCompressionQualityControls();
@@ -331,6 +398,26 @@ els.fileInput.addEventListener("change", (event) => {
 });
 els.uploadMoreButton.addEventListener("click", () => {
   els.fileInput.click();
+});
+els.videoFileInput.addEventListener("change", (event) => {
+  addVideoFiles([...event.target.files]);
+  els.videoFileInput.value = "";
+});
+els.videoWorkspaceInput.addEventListener("change", (event) => {
+  addVideoFiles([...event.target.files]);
+  els.videoWorkspaceInput.value = "";
+});
+els.videoProcessButton.addEventListener("click", processVideoQueue);
+els.videoDownloadButton.addEventListener("click", downloadAllVideos);
+els.videoClearButton.addEventListener("click", clearVideoQueue);
+els.videoPreviewCloseButton.addEventListener("click", () => els.videoPreviewModal.close());
+els.videoPreviewModal.addEventListener("close", () => {
+  els.videoPreviewPlayer.pause();
+  els.videoPreviewPlayer.removeAttribute("src");
+  videoPreviewItem = null;
+});
+els.videoPreviewDownloadButton.addEventListener("click", () => {
+  if (videoPreviewItem?.blob) downloadBlob(videoPreviewItem.blob, videoPreviewItem.outputName);
 });
 
 ["dragenter", "dragover"].forEach((name) => {
@@ -349,6 +436,29 @@ els.mainWorkspace.addEventListener("drop", (event) => {
   event.preventDefault();
   setWorkspaceDragging(false);
   addFiles([...event.dataTransfer.files].filter((file) => file.type.startsWith("image/")));
+});
+
+["dragenter", "dragover"].forEach((name) => {
+  els.videoWorkspace.addEventListener(name, (event) => {
+    event.preventDefault();
+    els.videoWorkspace.classList.add("is-dragging");
+    els.videoDropZone.classList.add("is-dragging");
+  });
+});
+
+els.videoWorkspace.addEventListener("dragleave", (event) => {
+  event.preventDefault();
+  if (!els.videoWorkspace.contains(event.relatedTarget)) {
+    els.videoWorkspace.classList.remove("is-dragging");
+    els.videoDropZone.classList.remove("is-dragging");
+  }
+});
+
+els.videoWorkspace.addEventListener("drop", (event) => {
+  event.preventDefault();
+  els.videoWorkspace.classList.remove("is-dragging");
+  els.videoDropZone.classList.remove("is-dragging");
+  addVideoFiles([...event.dataTransfer.files]);
 });
 
 els.processButton.addEventListener("click", processQueue);
@@ -1377,6 +1487,146 @@ function createItem(file, url, bitmap) {
   return item;
 }
 
+async function addVideoFiles(files) {
+  const videoFiles = files.filter((file) => file.type.startsWith("video/") || /\.(mp4|mov|webm)$/i.test(file.name));
+  for (const file of videoFiles) {
+    try {
+      const item = await createVideoItem(file);
+      videoState.items.push(item);
+      els.videoGrid.append(item.card);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+  setActiveModule("video");
+  updateUi();
+}
+
+async function createVideoItem(file) {
+  const url = URL.createObjectURL(file);
+  const metadata = await readVideoMetadata(url);
+  const thumbnail = await captureVideoThumbnail(url).catch(() => "");
+  const fragment = els.videoTemplate.content.cloneNode(true);
+  const card = fragment.querySelector(".video-card");
+  const image = fragment.querySelector(".video-thumb-image");
+  const status = fragment.querySelector(".card-status");
+  const previewButton = fragment.querySelector(".video-preview-button");
+  const downloadButton = fragment.querySelector(".video-download-button");
+  const deleteButton = fragment.querySelector(".video-delete-button");
+  const fileError = fragment.querySelector(".file-error");
+  const durationEl = fragment.querySelector(".file-duration");
+  const fileName = fragment.querySelector(".file-name");
+  const fileMeta = fragment.querySelector(".file-meta");
+
+  image.src = thumbnail;
+  image.alt = file.name;
+  fileName.textContent = file.name;
+  fileName.title = file.name;
+  fileMeta.textContent = formatVideoMeta(file, metadata);
+
+  const item = {
+    id: crypto.randomUUID(),
+    type: "video",
+    file,
+    url,
+    thumbnail,
+    metadata,
+    card,
+    image,
+    status,
+    previewButton,
+    downloadButton,
+    deleteButton,
+    durationEl,
+    errorEl: fileError,
+    errorInfo: null,
+    blob: null,
+    resultUrl: "",
+    outputName: makeVideoOutputName(file.name, getSelectedVideoMode()),
+    runninghubTaskId: "",
+    createdAt: Date.now(),
+    startedAt: null,
+    finishedAt: null,
+    durationMs: null,
+    durationState: "",
+  };
+
+  if (file.size > 100 * 1024 * 1024) {
+    setVideoCardStatus(item, "视频较大，处理可能更久", "is-working");
+  }
+  previewButton.addEventListener("click", () => openVideoPreview(item));
+  downloadButton.addEventListener("click", () => {
+    if (item.blob) downloadBlob(item.blob, item.outputName);
+  });
+  deleteButton.addEventListener("click", () => removeVideoItem(item));
+  card.addEventListener("click", (event) => {
+    if (!item.errorInfo) return;
+    const interactive = event.target.closest("button, a, input, select, textarea, label, .custom-select");
+    if (interactive && !event.target.closest(".file-error, .card-status")) return;
+    openTaskErrorDetails(item);
+  });
+  return item;
+}
+
+function readVideoMetadata(url) {
+  return new Promise((resolve) => {
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.muted = true;
+    video.playsInline = true;
+    video.onloadedmetadata = () => {
+      resolve({
+        width: video.videoWidth || 0,
+        height: video.videoHeight || 0,
+        duration: Number.isFinite(video.duration) ? video.duration : 0,
+      });
+    };
+    video.onerror = () => resolve({ width: 0, height: 0, duration: 0 });
+    video.src = url;
+  });
+}
+
+function captureVideoThumbnail(url) {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    video.crossOrigin = "anonymous";
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "metadata";
+    video.onloadedmetadata = () => {
+      video.currentTime = Math.min(0.25, Math.max(0, (video.duration || 1) / 10));
+    };
+    video.onseeked = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth || 320;
+      canvas.height = video.videoHeight || 180;
+      canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", 0.72));
+    };
+    video.onerror = reject;
+    video.src = url;
+  });
+}
+
+function formatVideoMeta(file, metadata = {}) {
+  const size = formatBytes(file.size);
+  const resolution = metadata.width && metadata.height ? `${metadata.width} x ${metadata.height}` : "分辨率读取中";
+  const duration = metadata.duration ? formatClockTime(metadata.duration) : "时长读取中";
+  const type = file.type || file.name.split(".").pop()?.toUpperCase() || "video";
+  return `${resolution} · ${duration} · ${type} · ${size}`;
+}
+
+function formatClockTime(seconds) {
+  const safe = Math.max(0, Math.round(seconds || 0));
+  const minutes = Math.floor(safe / 60);
+  const rest = safe % 60;
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    return `${hours}:${String(minutes % 60).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(rest).padStart(2, "0")}`;
+}
+
 async function processQueue() {
   if (!state.items.length || state.isProcessing) return;
   if (els.previewModal.open) els.previewModal.close();
@@ -1466,6 +1716,175 @@ async function processQueue() {
   state.isProcessing = false;
   stopTaskDurationTimer();
   updateUi();
+}
+
+async function processVideoQueue() {
+  if (!videoState.items.length || videoState.isProcessing) return;
+  videoState.isProcessing = true;
+  startTaskDurationTimer();
+  updateUi();
+  const options = readVideoOptions();
+
+  for (const item of videoState.items) {
+    item.blob = null;
+    item.resultUrl = "";
+    item.runninghubTaskId = "";
+    item.errorInfo = null;
+    item.card.classList.remove("has-error");
+    item.previewButton.disabled = true;
+    item.downloadButton.disabled = true;
+    item.deleteButton.disabled = true;
+    startTaskTiming(item);
+    setVideoCardStatus(item, "准备上传视频...", "is-working");
+
+    try {
+      item.outputName = makeVideoOutputName(item.file.name, options.mode);
+      const output = await processVideoItem(item, options);
+      item.blob = output.blob;
+      item.outputName = output.name || item.outputName;
+      if (item.resultUrl) URL.revokeObjectURL(item.resultUrl);
+      item.resultUrl = URL.createObjectURL(item.blob);
+      item.previewButton.disabled = false;
+      item.downloadButton.disabled = false;
+      setVideoCardStatus(item, "视频处理完成", "is-done");
+      finishTaskTiming(item, "done");
+    } catch (error) {
+      console.error(error);
+      setVideoTaskError(item, error);
+      setVideoCardStatus(item, "视频处理失败", "is-error");
+      finishTaskTiming(item, "error");
+    } finally {
+      item.deleteButton.disabled = false;
+    }
+  }
+
+  videoState.isProcessing = false;
+  stopTaskDurationTimer();
+  updateUi();
+}
+
+async function processVideoItem(item, options) {
+  let inputBlob = item.file;
+  let inputName = item.file.name;
+  if (options.mode === "video-chroma" || options.mode === "video-chroma-upscale") {
+    const chroma = await runVideoWorkerTask({
+      item,
+      proxyUrl: VIDEO_CHROMA_PROXY_URL,
+      file: inputBlob,
+      fileName: inputName,
+      label: "视频抠绿幕",
+      extraFields: {
+        keyColor: options.keyColor,
+        tolerance: options.chromaTolerance,
+        edgeFeather: options.chromaFeather,
+        spillSuppression: options.spillSuppression ? "1" : "0",
+      },
+    });
+    inputBlob = chroma.blob;
+    inputName = makeVideoOutputName(item.file.name, "video-chroma");
+  }
+  if (options.mode === "video-upscale" || options.mode === "video-chroma-upscale") {
+    const upscale = await runVideoWorkerTask({
+      item,
+      proxyUrl: VIDEO_UPSCALE_PROXY_URL,
+      file: inputBlob,
+      fileName: inputName,
+      label: "视频高清放大",
+    });
+    inputBlob = upscale.blob;
+    inputName = makeVideoOutputName(item.file.name, options.mode);
+  }
+  return { blob: inputBlob, name: inputName };
+}
+
+async function runVideoWorkerTask({ item, proxyUrl, file, fileName, label, extraFields = {} }) {
+  if (!proxyUrl) {
+    throw createVideoError(`${label}工作流未配置，请先部署 Worker 并补充 RunningHub 参数。`, {
+      stage: "config",
+      detail: `${label} Worker URL 为空。`,
+    });
+  }
+
+  setVideoCardStatus(item, `正在上传到 RunningHub...`, "is-working");
+  const createBody = new FormData();
+  createBody.set("action", "create");
+  createBody.set("file", file, fileName);
+  Object.entries(extraFields).forEach(([key, value]) => createBody.set(key, value));
+
+  const createResponse = await fetch(proxyUrl, { method: "POST", body: createBody });
+  const createData = await readVideoWorkerJson(createResponse);
+  if (!createResponse.ok || createData?.ok === false) {
+    throw createVideoError(createData?.message || `${label}任务创建失败`, {
+      stage: createData?.stage || "create_task",
+      detail: createData?.detail || "",
+      taskId: createData?.taskId || "",
+      workerUrl: proxyUrl,
+    });
+  }
+  const taskId = createData.taskId;
+  item.runninghubTaskId = taskId || "";
+  setVideoCardStatus(item, `任务已创建，taskId: ${taskId || "未知"}`, "is-working");
+
+  for (let poll = 1; poll <= VIDEO_MAX_POLLS; poll += 1) {
+    await sleep(VIDEO_POLL_INTERVAL_MS);
+    setVideoCardStatus(item, `RunningHub 正在处理视频，第 ${poll} 次检查...`, "is-working");
+    const statusBody = new FormData();
+    statusBody.set("action", "status");
+    statusBody.set("taskId", taskId);
+    const statusResponse = await fetch(proxyUrl, { method: "POST", body: statusBody });
+    const contentType = statusResponse.headers.get("Content-Type") || "";
+    if (statusResponse.ok && /^video\//i.test(contentType)) {
+      const blob = await statusResponse.blob();
+      item.runninghubTaskId = statusResponse.headers.get("X-Video-TaskId") || taskId || "";
+      return { blob };
+    }
+    const data = await readVideoWorkerJson(statusResponse);
+    if (!statusResponse.ok || data?.ok === false || data?.status === "failed") {
+      throw createVideoError(data?.message || `${label}处理失败`, {
+        stage: data?.stage || "poll_task",
+        detail: data?.detail || "",
+        taskId: data?.taskId || taskId || "",
+        workerUrl: proxyUrl,
+      });
+    }
+  }
+
+  throw createVideoError(`${label}长时间未返回结果，请稍后重试。`, {
+    stage: "poll_task",
+    detail: `已轮询 ${VIDEO_MAX_POLLS} 次。`,
+    taskId: item.runninghubTaskId,
+    workerUrl: proxyUrl,
+  });
+}
+
+async function readVideoWorkerJson(response) {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {
+      ok: false,
+      stage: "worker_response",
+      message: `Worker 返回非 JSON：HTTP ${response.status}`,
+      detail: text.slice(0, 500),
+    };
+  }
+}
+
+function readVideoOptions() {
+  return {
+    mode: getSelectedVideoMode(),
+    upscaleWorkflow: els.videoUpscaleSelect.value,
+    chromaWorkflow: els.videoChromaSelect.value,
+    keyColor: els.videoKeyColorInput.value,
+    chromaTolerance: els.videoChromaToleranceSelect.value,
+    chromaFeather: els.videoChromaFeatherSelect.value,
+    spillSuppression: els.videoSpillToggle.checked,
+  };
+}
+
+function getSelectedVideoMode() {
+  return document.querySelector('input[name="videoMode"]:checked')?.value || "video-upscale";
 }
 
 function openPreview(item, { mode = item.resultCanvas ? "result" : "compress" } = {}) {
@@ -2893,6 +3312,46 @@ function saveSelectedRemoveBgModel() {
   } catch {
     // localStorage may be unavailable when opening from stricter file contexts.
   }
+}
+
+function normalizeVideoWorkflows(workflows, fallback) {
+  const source = Array.isArray(workflows) && workflows.length ? workflows : [fallback];
+  const seen = new Set();
+  return source
+    .map((workflow) => {
+      const id = String(workflow?.id || fallback.id).trim();
+      const label = String(workflow?.label || fallback.label).trim();
+      const provider = String(workflow?.provider || "runninghub").trim();
+      if (!id || !label || seen.has(id)) return null;
+      seen.add(id);
+      return {
+        id,
+        label,
+        provider,
+        default: workflow?.default === true || id === fallback.id,
+      };
+    })
+    .filter(Boolean);
+}
+
+function initializeVideoWorkflowOptions() {
+  fillWorkflowSelect(els.videoUpscaleSelect, VIDEO_UPSCALE_WORKFLOWS);
+  fillWorkflowSelect(els.videoChromaSelect, VIDEO_CHROMA_WORKFLOWS);
+}
+
+function fillWorkflowSelect(select, workflows) {
+  if (!select) return;
+  select.innerHTML = "";
+  workflows.forEach((workflow) => {
+    const option = document.createElement("option");
+    option.value = workflow.id;
+    option.textContent = workflow.label;
+    option.title = workflow.label;
+    select.append(option);
+  });
+  const defaultWorkflow = workflows.find((workflow) => workflow.default) || workflows[0];
+  if (defaultWorkflow) select.value = defaultWorkflow.id;
+  updateSelectTitle(select);
 }
 
 function normalizeUpscaleWorkflows(workflows) {
@@ -5267,6 +5726,42 @@ function setTaskError(item, options, error) {
   if (info.taskId) item.runninghubTaskId = info.taskId;
 }
 
+function setVideoTaskError(item, error) {
+  const info = {
+    stage: cleanErrorText(error?.stage || ""),
+    message: cleanErrorText(error?.displayMessage || error?.message || "视频处理失败"),
+    detail: cleanErrorText(error?.detail || ""),
+    taskId: cleanErrorText(error?.runninghubTaskId || item.runninghubTaskId || ""),
+    workerUrl: cleanErrorText(error?.workerUrl || ""),
+  };
+  item.errorInfo = info;
+  item.card.classList.add("has-error");
+  if (item.errorEl) {
+    const lines = [`失败原因：${info.message}`];
+    if (info.detail) lines.push(`详情：${info.detail}`);
+    if (info.taskId) lines.push(`taskId: ${info.taskId}`);
+    if (info.workerUrl) lines.push(`Worker：${info.workerUrl}`);
+    item.errorEl.textContent = lines.join("\n");
+    item.errorEl.title = JSON.stringify(info, null, 2);
+    item.errorEl.hidden = false;
+  }
+}
+
+function setVideoCardStatus(item, text, className = "") {
+  item.status.className = `card-status ${className}`;
+  item.status.textContent = text;
+  item.status.title = text;
+}
+
+function createVideoError(message, { stage = "", detail = "", taskId = "", workerUrl = "" } = {}) {
+  const error = new Error(message);
+  error.stage = stage;
+  error.detail = detail;
+  error.runninghubTaskId = taskId;
+  error.workerUrl = workerUrl;
+  return error;
+}
+
 function buildTaskErrorInfo(item, options, error) {
   const baseMessage = getTaskErrorMessage(options, error);
   const detail = cleanErrorText(error?.detail || "");
@@ -5304,6 +5799,7 @@ function openTaskErrorDetails(item) {
     message: item.errorInfo.message || "处理失败",
     detail: item.errorInfo.detail || "",
     taskId: item.errorInfo.taskId || item.runninghubTaskId || "",
+    workerUrl: item.errorInfo.workerUrl || "",
   };
   els.errorSummary.textContent = payload.message;
   els.errorSummary.title = payload.message;
@@ -5362,15 +5858,51 @@ function resetResultCanvas(item) {
   ctx.clearRect(0, 0, item.resultCanvas.width, item.resultCanvas.height);
 }
 
+function setActiveModule(moduleName) {
+  state.activeModule = moduleName === "video" ? "video" : "image";
+  els.moduleTabs.forEach((button) => {
+    const active = button.dataset.moduleTab === state.activeModule;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-current", active ? "page" : "false");
+  });
+  els.modulePanels.forEach((panel) => {
+    const active = panel.dataset.modulePanel === state.activeModule;
+    panel.hidden = !active;
+    panel.classList.toggle("is-active", active);
+  });
+  updateVideoOptionVisibility();
+  updateUi();
+}
+
+function updateVideoOptionVisibility() {
+  const mode = getSelectedVideoMode();
+  const needsUpscale = mode === "video-upscale" || mode === "video-chroma-upscale";
+  const needsChroma = mode === "video-chroma" || mode === "video-chroma-upscale";
+  document.querySelectorAll('[data-video-option="video-upscale-model"]').forEach((element) => {
+    element.hidden = !needsUpscale;
+  });
+  document.querySelectorAll('[data-video-option="video-chroma-model"], [data-video-option="chroma-params"]').forEach((element) => {
+    element.hidden = !needsChroma;
+  });
+}
+
 function updateUi() {
   const total = state.items.length;
   const completed = state.items.filter((item) => item.blob).length;
+  const activeVideo = state.activeModule === "video";
   state.items.forEach((item) => {
     item.deleteButton.disabled = state.isProcessing;
     setItemCancelable(item, state.isProcessing && !item.blob && !item.cancelRequested);
   });
+  videoState.items.forEach((item) => {
+    item.deleteButton.disabled = videoState.isProcessing;
+  });
   els.emptyState.classList.toggle("is-hidden", total > 0);
   els.mainWorkspace.classList.toggle("has-items", total > 0);
+  els.mainWorkspace.hidden = activeVideo;
+  els.videoWorkspace.hidden = !activeVideo;
+  els.uploadMoreButton.hidden = activeVideo;
+  els.compressPanel.hidden = activeVideo;
   const missingPixianCredentials = total > 0 && needsPixianCredentials() && !hasPixianCredentials();
   const missingKoukoutuCredentials = total > 0 && needsKoukoutuCredentials() && !hasKoukoutuCredentials();
   const missingApiCredentials = missingPixianCredentials || missingKoukoutuCredentials;
@@ -5383,14 +5915,28 @@ function updateUi() {
   els.downloadButton.disabled = completed === 0 || state.isProcessing;
   els.clearButton.disabled = total === 0 || state.isProcessing;
   els.uploadMoreButton.disabled = state.isProcessing;
+  els.videoProcessButton.disabled = videoState.items.length === 0 || videoState.isProcessing;
+  els.videoDownloadButton.disabled = !videoState.items.some((item) => item.blob) || videoState.isProcessing;
+  els.videoClearButton.disabled = videoState.items.length === 0 || videoState.isProcessing;
+  els.videoDropZone.classList.toggle("is-hidden", videoState.items.length > 0);
+  els.videoWorkspace.classList.toggle("has-items", videoState.items.length > 0);
   els.queueStatus.textContent = total ? `${total} 张图片` : "待上传";
-  els.hintText.textContent = missingApiCredentials
+  if (activeVideo) {
+    els.stageTitle.textContent = "视频任务";
+    els.queueStatus.textContent = videoState.items.length ? `${videoState.items.length} 个视频` : "待上传";
+    els.hintText.textContent = videoState.items.length
+      ? "视频任务会在这里显示 RunningHub 处理进度、taskId、预览与下载。"
+      : "上传视频后会在这里显示首帧、信息与处理结果。";
+  } else {
+    els.stageTitle.textContent = "图片任务";
+    els.hintText.textContent = missingApiCredentials
     ? missingKoukoutuCredentials
       ? "抠抠图需要 API Key；可在左侧入口获取并填入。"
       : "Pixian 需要 API Id 和 Secret；可在左侧入口获取并填入。"
     : total
       ? "调整左侧参数后可以重新处理，结果会覆盖当前预览。"
       : "上传图片后会在这里显示原图与处理结果。";
+  }
   updateProgress(completed, total);
 }
 
@@ -5427,6 +5973,9 @@ function startTaskDurationTimer() {
   stopTaskDurationTimer();
   taskDurationTimer = window.setInterval(() => {
     state.items.forEach((item) => {
+      if (item.startedAt && !item.finishedAt) updateTaskDurationDisplay(item);
+    });
+    videoState.items.forEach((item) => {
       if (item.startedAt && !item.finishedAt) updateTaskDurationDisplay(item);
     });
   }, 1000);
@@ -5477,12 +6026,28 @@ function clearQueue() {
   updateUi();
 }
 
+function clearVideoQueue() {
+  if (els.videoPreviewModal.open) els.videoPreviewModal.close();
+  for (const item of videoState.items) cleanupVideoItem(item);
+  videoState.items = [];
+  els.videoGrid.replaceChildren();
+  updateUi();
+}
+
 function removeQueueItem(item) {
   if (state.isProcessing) return;
   if (previewItem === item && els.previewModal.open) els.previewModal.close();
   if (editItem === item && els.editModal.open) els.editModal.close();
   cleanupQueueItem(item);
   state.items = state.items.filter((candidate) => candidate !== item);
+  item.card.remove();
+  updateUi();
+}
+
+function removeVideoItem(item) {
+  if (videoState.isProcessing) return;
+  cleanupVideoItem(item);
+  videoState.items = videoState.items.filter((candidate) => candidate !== item);
   item.card.remove();
   updateUi();
 }
@@ -5538,6 +6103,43 @@ function cleanupQueueItem(item) {
     item.resultCanvas.width = 0;
     item.resultCanvas.height = 0;
   }
+}
+
+function cleanupVideoItem(item) {
+  if (!item) return;
+  if (item.url) URL.revokeObjectURL(item.url);
+  if (item.resultUrl) URL.revokeObjectURL(item.resultUrl);
+  item.url = "";
+  item.resultUrl = "";
+  item.file = null;
+  item.blob = null;
+  item.errorInfo = null;
+  if (item.image) item.image.removeAttribute("src");
+}
+
+function openVideoPreview(item) {
+  if (!item?.blob) return;
+  videoPreviewItem = item;
+  if (!item.resultUrl) item.resultUrl = URL.createObjectURL(item.blob);
+  els.videoPreviewTitle.textContent = item.outputName || "视频预览";
+  els.videoPreviewMeta.textContent = `${formatBytes(item.blob.size)}${item.runninghubTaskId ? ` · taskId: ${item.runninghubTaskId}` : ""}`;
+  els.videoPreviewPlayer.src = item.resultUrl;
+  if (typeof els.videoPreviewModal.showModal === "function") {
+    els.videoPreviewModal.showModal();
+  } else {
+    els.videoPreviewModal.setAttribute("open", "");
+  }
+}
+
+async function downloadAllVideos() {
+  const ready = videoState.items.filter((item) => item.blob);
+  if (!ready.length) return;
+  if (ready.length === 1) {
+    downloadBlob(ready[0].blob, ready[0].outputName);
+    return;
+  }
+  const zipBlob = await createZip(ready.map((item) => ({ name: item.outputName, blob: item.blob })));
+  downloadBlob(zipBlob, `video-results-${dateStamp()}.zip`);
 }
 
 async function downloadAll() {
@@ -5668,6 +6270,18 @@ function makeOutputName(name) {
   const dot = name.lastIndexOf(".");
   const base = dot > -1 ? name.slice(0, dot) : name;
   return `${sanitizeName(base)}-processed.png`;
+}
+
+function makeVideoOutputName(name, mode) {
+  const dot = name.lastIndexOf(".");
+  const base = dot > -1 ? name.slice(0, dot) : name;
+  const extension = dot > -1 ? name.slice(dot + 1).toLowerCase() : "mp4";
+  const suffixes = {
+    "video-upscale": "upscaled",
+    "video-chroma": "chroma",
+    "video-chroma-upscale": "chroma-upscaled",
+  };
+  return `${sanitizeName(base)}-${suffixes[mode] || "processed"}.${extension || "mp4"}`;
 }
 
 function sanitizeName(name) {

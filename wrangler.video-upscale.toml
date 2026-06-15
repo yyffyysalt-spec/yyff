@@ -1,0 +1,9 @@
+name = "runninghub-video-upscale-worker"
+main = "runninghub-video-upscale-worker.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+RUNNINGHUB_VIDEO_UPSCALE_WORKFLOW_ID = ""
+RUNNINGHUB_VIDEO_UPSCALE_INPUT_NODE_ID = ""
+RUNNINGHUB_VIDEO_UPSCALE_INPUT_FIELD_NAME = ""
+RUNNINGHUB_VIDEO_UPSCALE_OUTPUT_NODE_ID = ""

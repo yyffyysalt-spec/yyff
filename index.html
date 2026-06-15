@@ -25,7 +25,7 @@
     <meta name="twitter:image" content="https://yyffyysalt-spec.github.io/yyff/assets/og-cover.png" />
     <meta name="twitter:image:alt" content="批量抠图 + 高清放大工具预览图" />
     <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./styles.css?v=20260615-3" />
+    <link rel="stylesheet" href="./styles.css?v=20260615-video-1" />
   </head>
   <body>
     <main class="app-shell">
@@ -35,10 +35,23 @@
             <div>
               <p class="eyebrow">MADE IN 37</p>
               <h1>批量抠图 + 高清放大</h1>
+              <p class="brand-subtitle">图片与视频的 AI 后期工具箱</p>
             </div>
             <span class="status-pill" id="queueStatus">待上传</span>
           </div>
 
+          <nav class="module-switcher" aria-label="功能模块">
+            <button class="module-tab is-active" type="button" data-module-tab="image">
+              <span>图片处理</span>
+              <small>抠图 / 放大 / 压缩</small>
+            </button>
+            <button class="module-tab" type="button" data-module-tab="video">
+              <span>视频处理</span>
+              <small>高清放大 / 抠绿幕</small>
+            </button>
+          </nav>
+
+          <section class="module-panel image-module is-active" id="imageControls" data-module-panel="image" aria-label="图片处理参数">
           <div class="control-group">
             <span class="control-label">处理模式</span>
             <div class="segmented" role="radiogroup" aria-label="处理模式">
@@ -185,6 +198,94 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
             </button>
           </div>
+          </section>
+
+          <section class="module-panel video-module" id="videoControls" data-module-panel="video" aria-label="视频处理参数" hidden>
+            <label class="video-upload-card">
+              <input id="videoFileInput" type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" multiple />
+              <span class="drop-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M4 6h11a3 3 0 0 1 3 3v1l3-2v8l-3-2v1a3 3 0 0 1-3 3H4V6Z"/><path d="M8 10v4l4-2-4-2Z"/></svg>
+              </span>
+              <span class="drop-title">选择或拖入视频</span>
+              <span class="drop-copy">支持 MP4、MOV、WEBM。视频较大时 RunningHub 处理会更久。</span>
+            </label>
+
+            <div class="control-group">
+              <span class="control-label">视频处理模式</span>
+              <div class="segmented" role="radiogroup" aria-label="视频处理模式">
+                <label>
+                  <input type="radio" name="videoMode" value="video-upscale" checked />
+                  <span>只放大视频</span>
+                </label>
+                <label>
+                  <input type="radio" name="videoMode" value="video-chroma" />
+                  <span>只抠绿幕</span>
+                </label>
+                <label>
+                  <input type="radio" name="videoMode" value="video-chroma-upscale" />
+                  <span>抠绿幕 + 放大</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="control-grid">
+              <label class="field" data-video-option="video-upscale-model">
+                <span>视频放大模型</span>
+                <select id="videoUpscaleSelect">
+                  <option value="runninghub-video-upscale">RunningHub 视频高清放大</option>
+                </select>
+              </label>
+              <label class="field" data-video-option="video-chroma-model">
+                <span>视频抠绿幕模型</span>
+                <select id="videoChromaSelect">
+                  <option value="runninghub-video-chroma">RunningHub 视频抠绿幕</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="video-chroma-options" data-video-option="chroma-params">
+              <label class="field color-field">
+                <span>绿幕颜色</span>
+                <span class="color-row">
+                  <input id="videoKeyColorInput" type="color" value="#00ff00" />
+                  <span id="videoKeyColorText">#00ff00</span>
+                </span>
+              </label>
+              <label class="field">
+                <span>容差</span>
+                <select id="videoChromaToleranceSelect">
+                  <option value="low">低</option>
+                  <option value="medium" selected>中等</option>
+                  <option value="high">高</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>边缘羽化</span>
+                <select id="videoChromaFeatherSelect">
+                  <option value="low" selected>低</option>
+                  <option value="medium">中等</option>
+                  <option value="high">高</option>
+                </select>
+              </label>
+              <label class="toggle">
+                <input id="videoSpillToggle" type="checkbox" checked />
+                <span>去绿边</span>
+              </label>
+            </div>
+
+            <div class="actions">
+              <button class="primary-button" id="videoProcessButton" type="button" disabled>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.6 5.2L19 10l-5.4 1.8L12 17l-1.6-5.2L5 10l5.4-1.8L12 3Z"/></svg>
+                开始处理视频
+              </button>
+              <button class="icon-button" id="videoDownloadButton" type="button" disabled title="下载视频结果">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10m0 0 4-4m-4 4-4-4M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"/></svg>
+              </button>
+              <button class="icon-button" id="videoClearButton" type="button" disabled title="清空视频任务">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
+              </button>
+            </div>
+          </section>
 
           <section class="free-cutout-links free-links-card sidebar-tools" aria-label="免费抠图链接">
             <h3>免费抠图链接</h3>
@@ -282,7 +383,7 @@
 
           <div class="stage-header">
             <div>
-              <h2>任务列表</h2>
+              <h2 id="stageTitle">图片任务</h2>
               <p id="hintText">上传图片后会在这里显示原图与处理结果。</p>
             </div>
             <div class="stage-header-actions">
@@ -308,6 +409,18 @@
             </label>
 
             <div class="image-grid task-grid" id="imageGrid"></div>
+          </section>
+
+          <section class="main-workspace video-workspace" id="videoWorkspace" aria-label="视频上传与任务结果" hidden>
+            <label class="drop-zone workspace-dropzone video-dropzone" id="videoDropZone">
+              <input id="videoWorkspaceInput" type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" multiple />
+              <span class="drop-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M4 6h11a3 3 0 0 1 3 3v1l3-2v8l-3-2v1a3 3 0 0 1-3 3H4V6Z"/><path d="M8 10v4l4-2-4-2Z"/></svg>
+              </span>
+              <span class="drop-title">拖入视频或点击上传</span>
+              <span class="drop-copy">支持 MP4、MOV、WEBM；视频任务会在这里显示处理进度。</span>
+            </label>
+            <div class="video-grid task-grid" id="videoGrid"></div>
           </section>
         </section>
       </section>
@@ -346,6 +459,31 @@
             </button>
             <button class="small-button edit-button" type="button" disabled>编辑</button>
             <button class="small-button download-button" type="button" disabled>下载</button>
+          </div>
+        </div>
+      </article>
+    </template>
+
+    <template id="videoCardTemplate">
+      <article class="video-card">
+        <div class="video-thumb checker">
+          <img class="video-thumb-image" alt="视频首帧预览" />
+          <span class="task-type-badge">视频</span>
+          <div class="card-status">等待处理</div>
+        </div>
+        <div class="card-footer">
+          <div>
+            <strong class="file-name"></strong>
+            <span class="file-meta"></span>
+            <span class="file-duration" aria-live="polite"></span>
+            <div class="file-error" hidden></div>
+          </div>
+          <div class="card-buttons">
+            <button class="small-button video-preview-button" type="button" disabled>查看</button>
+            <button class="small-button video-download-button" type="button" disabled>下载</button>
+            <button class="icon-button video-delete-button task-delete-button" type="button" title="删除" aria-label="删除">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
+            </button>
           </div>
         </div>
       </article>
@@ -399,6 +537,26 @@
             <button class="crop-handle crop-handle-sw" type="button" data-crop-handle="sw" aria-label="裁剪左下角"></button>
             <button class="crop-handle crop-handle-w" type="button" data-crop-handle="w" aria-label="裁剪左边"></button>
           </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="video-preview-modal preview-modal" id="videoPreviewModal" aria-labelledby="videoPreviewTitle">
+      <div class="preview-panel">
+        <div class="preview-toolbar">
+          <div>
+            <h2 id="videoPreviewTitle">视频预览</h2>
+            <p id="videoPreviewMeta"></p>
+          </div>
+          <div class="preview-actions">
+            <button class="small-button" id="videoPreviewDownloadButton" type="button">下载</button>
+            <button class="icon-button" id="videoPreviewCloseButton" type="button" title="关闭" aria-label="关闭">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="preview-image-wrap video-preview-wrap">
+          <video id="videoPreviewPlayer" controls playsinline></video>
         </div>
       </div>
     </dialog>
@@ -493,7 +651,7 @@
       </div>
     </dialog>
 
-    <script src="./config.js?v=20260612-4"></script>
-    <script src="./app.js?v=20260615-3"></script>
+    <script src="./config.js?v=20260615-video-1"></script>
+    <script src="./app.js?v=20260615-video-1"></script>
   </body>
 </html>
