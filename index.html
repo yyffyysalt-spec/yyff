@@ -25,7 +25,7 @@
     <meta name="twitter:image" content="https://yyffyysalt-spec.github.io/yyff/assets/og-cover.png" />
     <meta name="twitter:image:alt" content="批量抠图 + 高清放大工具预览图" />
     <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./styles.css?v=20260615-2" />
+    <link rel="stylesheet" href="./styles.css?v=20260615-3" />
   </head>
   <body>
     <main class="app-shell">
@@ -154,6 +154,14 @@
             <label class="toggle" data-option="edge-cleanup">
               <input id="edgeCleanupToggle" type="checkbox" checked />
               <span>边缘净化（去黑边）</span>
+            </label>
+            <label class="field compact-field" data-option="edge-cleanup-strength">
+              <span>边缘净化强度</span>
+              <select id="edgeCleanupStrengthSelect">
+                <option value="light">轻</option>
+                <option value="standard" selected>标准</option>
+                <option value="strong">强</option>
+              </select>
             </label>
             <label class="toggle" data-option="sharpen">
               <input id="sharpenToggle" type="checkbox" checked />
@@ -486,6 +494,6 @@
     </dialog>
 
     <script src="./config.js?v=20260612-4"></script>
-    <script src="./app.js?v=20260615-2"></script>
+    <script src="./app.js?v=20260615-3"></script>
   </body>
 </html>

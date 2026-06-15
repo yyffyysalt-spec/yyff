@@ -39,6 +39,7 @@ const els = {
   shrinkSelect: document.querySelector("#shrinkSelect"),
   trimToggle: document.querySelector("#trimToggle"),
   edgeCleanupToggle: document.querySelector("#edgeCleanupToggle"),
+  edgeCleanupStrengthSelect: document.querySelector("#edgeCleanupStrengthSelect"),
   sharpenToggle: document.querySelector("#sharpenToggle"),
   checkerToggle: document.querySelector("#checkerToggle"),
   queueStatus: document.querySelector("#queueStatus"),
@@ -120,6 +121,7 @@ els.edgeShrinkOption = document.querySelector('[data-option="edge-shrink"]');
 els.toleranceOption = document.querySelector('[data-option="tolerance"]');
 els.autoCropOption = document.querySelector('[data-option="auto-crop"]');
 els.edgeCleanupOption = document.querySelector('[data-option="edge-cleanup"]');
+els.edgeCleanupStrengthOption = document.querySelector('[data-option="edge-cleanup-strength"]');
 els.sharpenOption = document.querySelector('[data-option="sharpen"]');
 
 const MAX_OUTPUT_PIXELS = 42000000;
@@ -272,6 +274,11 @@ els.compressFileInput.addEventListener("change", (event) => {
 });
 els.compressFormatSelect.addEventListener("change", scheduleCompressionEstimate);
 els.scaleSelect.addEventListener("change", () => updateSelectTitle(els.scaleSelect));
+els.edgeCleanupStrengthSelect.addEventListener("change", () => updateSelectTitle(els.edgeCleanupStrengthSelect));
+els.edgeCleanupToggle.addEventListener("change", () => {
+  updateOptionVisibility();
+  updateUi();
+});
 els.compressFormatSelect.addEventListener("change", () => updateSelectTitle(els.compressFormatSelect));
 els.compressButton.addEventListener("click", compressSelectedFiles);
 els.compressDownloadButton.addEventListener("click", downloadCompressedFiles);
@@ -2717,7 +2724,7 @@ async function processItem(item, options) {
 
   if (options.mode !== "upscale") {
     canvas = await removeBackgroundWithProvider(item.file, canvas, options, item);
-    if (options.edgeCleanup) canvas = cleanupTransparentEdges(canvas);
+    if (options.edgeCleanup) canvas = cleanTransparentEdges(canvas, { strength: options.edgeCleanupStrength });
   }
 
   if (options.mode !== "upscale" && options.trim) canvas = trimTransparent(canvas);
@@ -2754,6 +2761,7 @@ function readOptions() {
     backgroundColor: null,
     trim: DEFAULT_AUTO_TRIM,
     edgeCleanup: mode !== "upscale" && els.edgeCleanupToggle.checked,
+    edgeCleanupStrength: els.edgeCleanupStrengthSelect?.value || "standard",
     sharpen: mode !== "cutout" && els.sharpenToggle.checked,
     pixianApiId: els.pixianApiIdInput.value.trim(),
     pixianApiSecret: els.pixianApiSecretInput.value.trim(),
@@ -3190,6 +3198,7 @@ function updateOptionVisibility() {
   setElementHidden(els.modelOption, !needsCutoutOptions);
   setElementHidden(els.toleranceOption, !needsTolerance);
   setElementHidden(els.edgeCleanupOption, !needsCutoutOptions);
+  setElementHidden(els.edgeCleanupStrengthOption, !needsCutoutOptions || !els.edgeCleanupToggle.checked);
 
   setElementHidden(els.scaleOption, !needsUpscaleOptions);
   setElementHidden(els.upscaleProviderOption, !needsUpscaleOptions);
@@ -5050,49 +5059,80 @@ function applyOutputBackground(canvas, color) {
   return output;
 }
 
-function cleanupTransparentEdges(canvas) {
+function cleanTransparentEdges(canvas, { strength = "standard" } = {}) {
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const source = new Uint8ClampedArray(image.data);
   const data = image.data;
   const { width, height } = image;
+  const config = getEdgeCleanupConfig(strength);
   let changed = 0;
 
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const index = (y * width + x) * 4;
       const alpha = source[index + 3];
-      if (alpha <= 0 || alpha >= 245) continue;
+      if (alpha <= 0 || alpha >= 250) continue;
 
-      let r = 0;
-      let g = 0;
-      let b = 0;
+      let targetR = 0;
+      let targetG = 0;
+      let targetB = 0;
       let weight = 0;
 
-      for (let dy = -2; dy <= 2; dy += 1) {
+      for (let dy = -config.radius; dy <= config.radius; dy += 1) {
         const ny = y + dy;
         if (ny < 0 || ny >= height) continue;
-        for (let dx = -2; dx <= 2; dx += 1) {
+        for (let dx = -config.radius; dx <= config.radius; dx += 1) {
           const nx = x + dx;
           if (nx < 0 || nx >= width || (dx === 0 && dy === 0)) continue;
           const neighbor = (ny * width + nx) * 4;
           const neighborAlpha = source[neighbor + 3];
-          if (neighborAlpha < 248) continue;
+          if (neighborAlpha < 246) continue;
           const distance = Math.max(1, Math.hypot(dx, dy));
-          const sampleWeight = 1 / distance;
-          r += source[neighbor] * sampleWeight;
-          g += source[neighbor + 1] * sampleWeight;
-          b += source[neighbor + 2] * sampleWeight;
+          const sampleWeight = (neighborAlpha / 255) / Math.pow(distance, 1.25);
+          targetR += source[neighbor] * sampleWeight;
+          targetG += source[neighbor + 1] * sampleWeight;
+          targetB += source[neighbor + 2] * sampleWeight;
           weight += sampleWeight;
         }
       }
 
       if (!weight) continue;
-      const edgeStrength = 1 - alpha / 255;
-      const mix = Math.min(0.82, Math.max(0.18, edgeStrength * 0.72));
-      data[index] = Math.round(source[index] * (1 - mix) + (r / weight) * mix);
-      data[index + 1] = Math.round(source[index + 1] * (1 - mix) + (g / weight) * mix);
-      data[index + 2] = Math.round(source[index + 2] * (1 - mix) + (b / weight) * mix);
+      targetR /= weight;
+      targetG /= weight;
+      targetB /= weight;
+
+      const alphaRatio = Math.max(0.08, alpha / 255);
+      const current = {
+        r: source[index],
+        g: source[index + 1],
+        b: source[index + 2],
+      };
+      const unpremultiplied = {
+        r: clampByte(current.r / alphaRatio),
+        g: clampByte(current.g / alphaRatio),
+        b: clampByte(current.b / alphaRatio),
+      };
+      const target = { r: targetR, g: targetG, b: targetB };
+      const currentLum = relativeLuminance(current.r, current.g, current.b);
+      const targetLum = relativeLuminance(target.r, target.g, target.b);
+      const currentSat = colorSaturation(current.r, current.g, current.b);
+      const targetSat = colorSaturation(target.r, target.g, target.b);
+      const distanceToTarget = colorDistance(current, target);
+      const isDarkEdge = currentLum + 8 < targetLum;
+      const isGrayEdge = currentSat + 0.035 < targetSat && distanceToTarget > 12;
+      const transparentFactor = 1 - alpha / 255;
+      const unpremultiplyMix = config.unpremultiply * transparentFactor;
+      const premixR = mixNumber(current.r, unpremultiplied.r, unpremultiplyMix);
+      const premixG = mixNumber(current.g, unpremultiplied.g, unpremultiplyMix);
+      const premixB = mixNumber(current.b, unpremultiplied.b, unpremultiplyMix);
+      const repairMix = (isDarkEdge || isGrayEdge || distanceToTarget > config.distanceThreshold)
+        ? config.mix * (0.45 + transparentFactor * 0.55)
+        : config.mix * 0.18 * transparentFactor;
+
+      data[index] = clampByte(mixNumber(premixR, target.r, repairMix));
+      data[index + 1] = clampByte(mixNumber(premixG, target.g, repairMix));
+      data[index + 2] = clampByte(mixNumber(premixB, target.b, repairMix));
       changed += 1;
     }
   }
@@ -5105,9 +5145,51 @@ function cleanupTransparentEdges(canvas) {
   output.previewCompareSafe = canvas.previewCompareSafe;
   console.log("[Edge cleanup] transparent edge cleanup", {
     size: `${width}x${height}`,
+    strength,
+    radius: config.radius,
     changedPixels: changed,
   });
   return output;
+}
+
+function cleanupTransparentEdges(canvas, options) {
+  return cleanTransparentEdges(canvas, options);
+}
+
+function getEdgeCleanupConfig(strength) {
+  const configs = {
+    light: { radius: 2, mix: 0.38, unpremultiply: 0.12, distanceThreshold: 28 },
+    standard: { radius: 3, mix: 0.58, unpremultiply: 0.2, distanceThreshold: 22 },
+    strong: { radius: 4, mix: 0.74, unpremultiply: 0.28, distanceThreshold: 18 },
+  };
+  return configs[strength] || configs.standard;
+}
+
+function clampByte(value) {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function mixNumber(from, to, amount) {
+  const ratio = Math.max(0, Math.min(1, amount));
+  return from * (1 - ratio) + to * ratio;
+}
+
+function relativeLuminance(r, g, b) {
+  return r * 0.2126 + g * 0.7152 + b * 0.0722;
+}
+
+function colorSaturation(r, g, b) {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  if (max === 0) return 0;
+  return (max - min) / max;
+}
+
+function colorDistance(a, b) {
+  const dr = a.r - b.r;
+  const dg = a.g - b.g;
+  const db = a.b - b.b;
+  return Math.sqrt(dr * dr + dg * dg + db * db);
 }
 
 function sharpenCanvas(canvas) {
