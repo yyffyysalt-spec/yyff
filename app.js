@@ -38,6 +38,7 @@ const els = {
   featherSelect: document.querySelector("#featherSelect"),
   shrinkSelect: document.querySelector("#shrinkSelect"),
   trimToggle: document.querySelector("#trimToggle"),
+  edgeCleanupToggle: document.querySelector("#edgeCleanupToggle"),
   sharpenToggle: document.querySelector("#sharpenToggle"),
   checkerToggle: document.querySelector("#checkerToggle"),
   queueStatus: document.querySelector("#queueStatus"),
@@ -118,6 +119,7 @@ els.edgeFeatherOption = document.querySelector('[data-option="edge-feather"]');
 els.edgeShrinkOption = document.querySelector('[data-option="edge-shrink"]');
 els.toleranceOption = document.querySelector('[data-option="tolerance"]');
 els.autoCropOption = document.querySelector('[data-option="auto-crop"]');
+els.edgeCleanupOption = document.querySelector('[data-option="edge-cleanup"]');
 els.sharpenOption = document.querySelector('[data-option="sharpen"]');
 
 const MAX_OUTPUT_PIXELS = 42000000;
@@ -1380,6 +1382,7 @@ async function processQueue() {
     item.canCompare = false;
     item.previewStrategy = "result-only";
     item.previewCompareReason = "";
+    item.previewNotice = "";
     item.cancelRequested = false;
     item.abortController = new AbortController();
     item.runninghubTaskId = "";
@@ -1478,6 +1481,9 @@ function openPreview(item, { mode = item.resultCanvas ? "result" : "compress" } 
     : isCompressionPreview
       ? `压缩后大小：${formatBytes(item.blob.size)}`
       : `${width} x ${height} · ${formatBytes(item.blob.size)}`;
+  if (mode === "result" && item.previewNotice) {
+    els.previewMeta.textContent = `${els.previewMeta.textContent} · ${item.previewNotice}`;
+  }
   els.previewModeToggle.hidden = !canCompare;
   els.previewImageWrap.classList.toggle("checker", !isOriginalPreview);
   setPreviewCropControls(isCompressionPreview);
@@ -1594,6 +1600,10 @@ function updateItemPreviewStrategy(item, options, outputCanvas) {
     : isRunningHubAi
       ? outputCanvas?.previewNormalizeMode || "runninghub-ai-compare-disabled"
       : "result-size-or-aspect-mismatch";
+  item.previewNotice =
+    isRunningHubAi && !compareSafe
+      ? "该结果为裁剪主体图，无法进行精确前后对比"
+      : "";
 
   console.log("[Preview] task preview strategy", {
     file: item.file?.name || item.outputName,
@@ -2707,6 +2717,7 @@ async function processItem(item, options) {
 
   if (options.mode !== "upscale") {
     canvas = await removeBackgroundWithProvider(item.file, canvas, options, item);
+    if (options.edgeCleanup) canvas = cleanupTransparentEdges(canvas);
   }
 
   if (options.mode !== "upscale" && options.trim) canvas = trimTransparent(canvas);
@@ -2742,6 +2753,7 @@ function readOptions() {
     shrink: DEFAULT_EDGE_SHRINK,
     backgroundColor: null,
     trim: DEFAULT_AUTO_TRIM,
+    edgeCleanup: mode !== "upscale" && els.edgeCleanupToggle.checked,
     sharpen: mode !== "cutout" && els.sharpenToggle.checked,
     pixianApiId: els.pixianApiIdInput.value.trim(),
     pixianApiSecret: els.pixianApiSecretInput.value.trim(),
@@ -3177,6 +3189,7 @@ function updateOptionVisibility() {
 
   setElementHidden(els.modelOption, !needsCutoutOptions);
   setElementHidden(els.toleranceOption, !needsTolerance);
+  setElementHidden(els.edgeCleanupOption, !needsCutoutOptions);
 
   setElementHidden(els.scaleOption, !needsUpscaleOptions);
   setElementHidden(els.upscaleProviderOption, !needsUpscaleOptions);
@@ -4372,6 +4385,7 @@ function normalizeRemoveBgResultToOriginalSize(
   let normalized = false;
   let normalizeReason = "same-size";
   let finalMode = "same_size_result";
+  let previewCompareSafe = false;
 
   if (shouldApplyMask) {
     setStatus?.("正在将 mask 应用到原图...");
@@ -4379,9 +4393,18 @@ function normalizeRemoveBgResultToOriginalSize(
     normalized = output.width !== rawWidth || output.height !== rawHeight;
     normalizeReason = "mask-to-original-size";
     finalMode = "mask_to_original";
+    previewCompareSafe = true;
+  } else if (resultMayBeCropped) {
+    output = cloneCanvas(resultImageOrCanvas);
+    normalized = false;
+    normalizeReason = sameSize ? "runninghub-ai-result-kept-real-size" : "runninghub-ai-cropped-result-kept-real-size";
+    finalMode = sameSize ? "runninghub-ai-direct-result" : "runninghub-ai-cropped-result-only";
+    previewCompareSafe = sameSize && Boolean(rawResultAlphaBBox && localReferenceBBox && areBBoxesClose(rawResultAlphaBBox, localReferenceBBox, originalWidth, originalHeight));
+    if (!previewCompareSafe) setStatus?.("该结果为裁剪主体图，无法进行精确前后对比。");
   } else if (sameSize && !needsBBoxPlacement(originalCanvas, resultImageOrCanvas, { resultMayBeCropped, rawBBox: rawResultAlphaBBox, referenceBBox: localReferenceBBox })) {
     output = cloneCanvas(resultImageOrCanvas);
     finalMode = returnedHasAlpha || resultType === "transparent" ? "direct_same_size_transparent" : "fallback_same_size";
+    previewCompareSafe = true;
   } else {
     placementNeeded = needsBBoxPlacement(originalCanvas, resultImageOrCanvas, {
       resultMayBeCropped,
@@ -4395,6 +4418,7 @@ function normalizeRemoveBgResultToOriginalSize(
       normalizeReason = "removebg-only-result-size-mismatch";
       finalMode = resultType === "transparent" || returnedHasAlpha ? "scaled_transparent_to_original" : "scaled_fallback_to_original";
       output = resizeCanvasTo(resultImageOrCanvas, originalWidth, originalHeight);
+      previewCompareSafe = true;
     } else {
       const placed = placeRunningHubCroppedResultByReferenceBBox(originalCanvas, resultImageOrCanvas, localReferenceCanvas, {
         resultBBox: rawResultAlphaBBox,
@@ -4441,11 +4465,7 @@ function normalizeRemoveBgResultToOriginalSize(
   });
 
   output.previewNormalizeMode = finalMode;
-  output.previewCompareSafe =
-    finalMode === "mask_to_original" ||
-    finalMode === "direct_same_size_transparent" ||
-    finalMode === "fallback_same_size" ||
-    (!resultMayBeCropped && (finalMode === "scaled_transparent_to_original" || finalMode === "scaled_fallback_to_original"));
+  output.previewCompareSafe = previewCompareSafe;
 
   return output;
 }
@@ -5030,6 +5050,66 @@ function applyOutputBackground(canvas, color) {
   return output;
 }
 
+function cleanupTransparentEdges(canvas) {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const source = new Uint8ClampedArray(image.data);
+  const data = image.data;
+  const { width, height } = image;
+  let changed = 0;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = (y * width + x) * 4;
+      const alpha = source[index + 3];
+      if (alpha <= 0 || alpha >= 245) continue;
+
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let weight = 0;
+
+      for (let dy = -2; dy <= 2; dy += 1) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= height) continue;
+        for (let dx = -2; dx <= 2; dx += 1) {
+          const nx = x + dx;
+          if (nx < 0 || nx >= width || (dx === 0 && dy === 0)) continue;
+          const neighbor = (ny * width + nx) * 4;
+          const neighborAlpha = source[neighbor + 3];
+          if (neighborAlpha < 248) continue;
+          const distance = Math.max(1, Math.hypot(dx, dy));
+          const sampleWeight = 1 / distance;
+          r += source[neighbor] * sampleWeight;
+          g += source[neighbor + 1] * sampleWeight;
+          b += source[neighbor + 2] * sampleWeight;
+          weight += sampleWeight;
+        }
+      }
+
+      if (!weight) continue;
+      const edgeStrength = 1 - alpha / 255;
+      const mix = Math.min(0.82, Math.max(0.18, edgeStrength * 0.72));
+      data[index] = Math.round(source[index] * (1 - mix) + (r / weight) * mix);
+      data[index + 1] = Math.round(source[index + 1] * (1 - mix) + (g / weight) * mix);
+      data[index + 2] = Math.round(source[index + 2] * (1 - mix) + (b / weight) * mix);
+      changed += 1;
+    }
+  }
+
+  const output = document.createElement("canvas");
+  output.width = width;
+  output.height = height;
+  output.getContext("2d").putImageData(image, 0, 0);
+  output.previewNormalizeMode = canvas.previewNormalizeMode;
+  output.previewCompareSafe = canvas.previewCompareSafe;
+  console.log("[Edge cleanup] transparent edge cleanup", {
+    size: `${width}x${height}`,
+    changedPixels: changed,
+  });
+  return output;
+}
+
 function sharpenCanvas(canvas) {
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -5193,6 +5273,7 @@ function resetResultCanvas(item) {
   item.canCompare = false;
   item.previewStrategy = "result-only";
   item.previewCompareReason = "";
+  item.previewNotice = "";
   item.resultCanvas.width = 1;
   item.resultCanvas.height = 1;
   const ctx = item.resultCanvas.getContext("2d");

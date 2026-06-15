@@ -25,7 +25,7 @@
     <meta name="twitter:image" content="https://yyffyysalt-spec.github.io/yyff/assets/og-cover.png" />
     <meta name="twitter:image:alt" content="批量抠图 + 高清放大工具预览图" />
     <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./styles.css?v=20260615-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260615-2" />
   </head>
   <body>
     <main class="app-shell">
@@ -143,13 +143,17 @@
               <output id="toleranceOutput">36</output>
             </label>
             <input id="toleranceRange" type="range" min="12" max="90" step="1" value="36" />
-            <p class="control-hint">仅本地极速生效：背景残留多可调高，误删主体时调低。</p>
+            <p class="control-hint">背景容差仅对本地极速模型生效。背景颜色较纯时可适当调高，复杂背景建议保持较低数值。</p>
           </div>
 
           <div class="toggle-list">
             <label class="toggle" data-option="auto-crop" hidden>
               <input id="trimToggle" type="checkbox" />
               <span>自动裁掉透明边</span>
+            </label>
+            <label class="toggle" data-option="edge-cleanup">
+              <input id="edgeCleanupToggle" type="checkbox" checked />
+              <span>边缘净化（去黑边）</span>
             </label>
             <label class="toggle" data-option="sharpen">
               <input id="sharpenToggle" type="checkbox" checked />
@@ -482,6 +486,6 @@
     </dialog>
 
     <script src="./config.js?v=20260612-4"></script>
-    <script src="./app.js?v=20260615-1"></script>
+    <script src="./app.js?v=20260615-2"></script>
   </body>
 </html>
