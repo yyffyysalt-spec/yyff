@@ -1551,6 +1551,7 @@ async function createVideoItem(file) {
     downloadButton,
     deleteButton,
     durationEl,
+    fileMeta,
     errorEl: fileError,
     errorInfo: null,
     blob: null,
@@ -1748,7 +1749,8 @@ async function processVideoQueue() {
     item.downloadButton.disabled = true;
     item.deleteButton.disabled = true;
     startTaskTiming(item);
-    setVideoCardStatus(item, "准备上传视频...", "is-working");
+    if (item.fileMeta) item.fileMeta.textContent = `${formatVideoMeta(item.file, item.metadata)} · ${getVideoModeLabel(options.mode)}`;
+    setVideoCardStatus(item, `${getVideoModeLabel(options.mode)}：等待处理`, "is-working");
 
     try {
       item.outputName = makeVideoOutputName(item.file.name, options.mode);
@@ -1777,15 +1779,20 @@ async function processVideoQueue() {
 }
 
 async function processVideoItem(item, options) {
-  let inputBlob = item.file;
-  let inputName = item.file.name;
-  if (options.mode === "video-chroma" || options.mode === "video-chroma-upscale") {
-    const chroma = await runVideoWorkerTask({
+  if (options.mode === "video-chroma-upscale") {
+    throw createVideoError("组合处理正在接入中，请先分别使用只抠绿幕或高清放大。", {
+      stage: "unsupported_mode",
+      detail: "当前版本先跑通单独的视频抠绿幕和视频高清放大，组合链路会在下一版接入。",
+    });
+  }
+  if (options.mode === "video-chroma") {
+    return runVideoWorkerTask({
       item,
       proxyUrl: VIDEO_CHROMA_PROXY_URL,
-      file: inputBlob,
-      fileName: inputName,
+      file: item.file,
+      fileName: item.file.name,
       label: "视频抠绿幕",
+      outputName: makeVideoOutputName(item.file.name, "video-chroma"),
       extraFields: {
         keyColor: options.keyColor,
         tolerance: options.chromaTolerance,
@@ -1793,38 +1800,56 @@ async function processVideoItem(item, options) {
         spillSuppression: options.spillSuppression ? "1" : "0",
       },
     });
-    inputBlob = chroma.blob;
-    inputName = makeVideoOutputName(item.file.name, "video-chroma");
   }
-  if (options.mode === "video-upscale" || options.mode === "video-chroma-upscale") {
-    const upscale = await runVideoWorkerTask({
+  if (options.mode === "video-upscale") {
+    return runVideoWorkerTask({
       item,
       proxyUrl: VIDEO_UPSCALE_PROXY_URL,
-      file: inputBlob,
-      fileName: inputName,
+      file: item.file,
+      fileName: item.file.name,
       label: "视频高清放大",
+      outputName: makeVideoOutputName(item.file.name, "video-upscale"),
     });
-    inputBlob = upscale.blob;
-    inputName = makeVideoOutputName(item.file.name, options.mode);
   }
-  return { blob: inputBlob, name: inputName };
+  throw createVideoError("未知视频处理模式。", {
+    stage: "config",
+    detail: `当前模式：${options.mode || "(empty)"}`,
+  });
 }
 
-async function runVideoWorkerTask({ item, proxyUrl, file, fileName, label, extraFields = {} }) {
+async function runVideoWorkerTask({ item, proxyUrl, file, fileName, label, outputName, extraFields = {} }) {
   if (!proxyUrl) {
-    throw createVideoError(`${label}工作流未配置，请先部署 Worker 并补充 RunningHub 参数。`, {
+    throw createVideoError("视频 Worker URL 未配置，请先部署 RunningHub 视频 Worker。", {
       stage: "config",
       detail: `${label} Worker URL 为空。`,
     });
   }
+  if (navigator && navigator.onLine === false) {
+    throw createVideoError("当前网络未连接，RunningHub 视频处理需要联网。", {
+      stage: "network",
+      detail: "浏览器当前处于离线状态。",
+      workerUrl: proxyUrl,
+    });
+  }
 
-  setVideoCardStatus(item, `正在上传到 RunningHub...`, "is-working");
+  setVideoCardStatus(item, `${label}：上传中...`, "is-working");
   const createBody = new FormData();
   createBody.set("action", "create");
   createBody.set("file", file, fileName);
+  createBody.set("options", JSON.stringify(extraFields));
   Object.entries(extraFields).forEach(([key, value]) => createBody.set(key, value));
 
-  const createResponse = await fetch(proxyUrl, { method: "POST", body: createBody });
+  let createResponse;
+  try {
+    createResponse = await fetch(proxyUrl, { method: "POST", body: createBody });
+  } catch (error) {
+    throw createVideoError("当前网络未连接，RunningHub 视频处理需要联网。", {
+      stage: "network",
+      detail: error?.message || String(error),
+      workerUrl: proxyUrl,
+    });
+  }
+  setVideoCardStatus(item, `${label}：创建任务中...`, "is-working");
   const createData = await readVideoWorkerJson(createResponse);
   if (!createResponse.ok || createData?.ok === false) {
     throw createVideoError(createData?.message || `${label}任务创建失败`, {
@@ -1836,20 +1861,30 @@ async function runVideoWorkerTask({ item, proxyUrl, file, fileName, label, extra
   }
   const taskId = createData.taskId;
   item.runninghubTaskId = taskId || "";
-  setVideoCardStatus(item, `任务已创建，taskId: ${taskId || "未知"}`, "is-working");
+  setVideoCardStatus(item, `${label}任务已创建，taskId: ${taskId || "未知"}`, "is-working");
 
   for (let poll = 1; poll <= VIDEO_MAX_POLLS; poll += 1) {
     await sleep(VIDEO_POLL_INTERVAL_MS);
-    setVideoCardStatus(item, `RunningHub 正在处理视频，第 ${poll} 次检查...`, "is-working");
+    setVideoCardStatus(item, `${label}处理中... 第 ${poll} 次检查`, "is-working");
     const statusBody = new FormData();
     statusBody.set("action", "status");
     statusBody.set("taskId", taskId);
-    const statusResponse = await fetch(proxyUrl, { method: "POST", body: statusBody });
+    let statusResponse;
+    try {
+      statusResponse = await fetch(proxyUrl, { method: "POST", body: statusBody });
+    } catch (error) {
+      throw createVideoError("当前网络未连接，RunningHub 视频处理需要联网。", {
+        stage: "network",
+        detail: error?.message || String(error),
+        taskId,
+        workerUrl: proxyUrl,
+      });
+    }
     const contentType = statusResponse.headers.get("Content-Type") || "";
     if (statusResponse.ok && /^video\//i.test(contentType)) {
       const blob = await statusResponse.blob();
       item.runninghubTaskId = statusResponse.headers.get("X-Video-TaskId") || taskId || "";
-      return { blob };
+      return { blob, name: outputName };
     }
     const data = await readVideoWorkerJson(statusResponse);
     if (!statusResponse.ok || data?.ok === false || data?.status === "failed") {
@@ -1860,6 +1895,15 @@ async function runVideoWorkerTask({ item, proxyUrl, file, fileName, label, extra
         workerUrl: proxyUrl,
       });
     }
+    if (data?.status === "done" && data.resultUrl) {
+      setVideoCardStatus(item, `${label}已完成，正在下载结果...`, "is-working");
+      const resultBlob = await downloadVideoResultFromUrl(data.resultUrl, {
+        taskId: data.taskId || taskId,
+        workerUrl: proxyUrl,
+      });
+      item.runninghubTaskId = data.taskId || taskId || "";
+      return { blob: resultBlob, name: data.filename || outputName };
+    }
   }
 
   throw createVideoError(`${label}长时间未返回结果，请稍后重试。`, {
@@ -1868,6 +1912,29 @@ async function runVideoWorkerTask({ item, proxyUrl, file, fileName, label, extra
     taskId: item.runninghubTaskId,
     workerUrl: proxyUrl,
   });
+}
+
+async function downloadVideoResultFromUrl(resultUrl, { taskId = "", workerUrl = "" } = {}) {
+  try {
+    const response = await fetch(resultUrl);
+    if (!response.ok) {
+      throw createVideoError("RunningHub 输出视频下载失败", {
+        stage: "download_result",
+        detail: `HTTP ${response.status}`,
+        taskId,
+        workerUrl,
+      });
+    }
+    return response.blob();
+  } catch (error) {
+    if (error?.stage) throw error;
+    throw createVideoError("RunningHub 输出视频下载失败", {
+      stage: "download_result",
+      detail: error?.message || String(error),
+      taskId,
+      workerUrl,
+    });
+  }
 }
 
 async function readVideoWorkerJson(response) {
@@ -1898,6 +1965,15 @@ function readVideoOptions() {
 
 function getSelectedVideoMode() {
   return document.querySelector('input[name="videoMode"]:checked')?.value || "video-chroma-upscale";
+}
+
+function getVideoModeLabel(mode) {
+  const labels = {
+    "video-chroma-upscale": "抠绿幕 + 放大",
+    "video-chroma": "只抠绿幕",
+    "video-upscale": "高清放大",
+  };
+  return labels[mode] || "视频处理";
 }
 
 function openPreview(item, { mode = item.resultCanvas ? "result" : "compress" } = {}) {

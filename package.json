@@ -14,6 +14,8 @@
     "deploy:ai-removebg-worker": "wrangler deploy --config wrangler.ai-removebg.toml",
     "deploy:video-upscale-worker": "wrangler deploy --config wrangler.video-upscale.toml",
     "deploy:video-chroma-worker": "wrangler deploy --config wrangler.video-chroma.toml",
+    "tail:video-upscale-worker": "wrangler tail runninghub-video-upscale-worker --config wrangler.video-upscale.toml",
+    "tail:video-chroma-worker": "wrangler tail runninghub-video-chroma-worker --config wrangler.video-chroma.toml",
     "verify:video-workers": "node scripts/verify-video-workers.js",
     "deploy:web": "echo \"GitHub Pages uses repository publishing source\"",
     "deploy:all": "npm run check && npm run deploy:worker && npm run deploy:removebg-worker && npm run deploy:web",
