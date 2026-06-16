@@ -3264,9 +3264,8 @@ function initializeRemoveBgModelOptions() {
     els.modelSelect.append(option);
   });
 
-  const savedChoice = getStoredRemoveBgChoice();
-  els.modelSelect.value = (savedChoice || getDefaultRemoveBgChoice()).id;
-  saveSelectedRemoveBgModel();
+  els.modelSelect.value = getDefaultRemoveBgChoice().id;
+  clearStoredNonDefaultRemoveBgChoice();
   updateSelectTitle(els.modelSelect);
   syncCustomSelects();
 }
@@ -3312,6 +3311,17 @@ function getStoredRemoveBgChoice() {
     return getRemoveBgChoices().find((choice) => choice.id === savedId) || null;
   } catch {
     return null;
+  }
+}
+
+function clearStoredNonDefaultRemoveBgChoice() {
+  try {
+    const savedId = localStorage.getItem(REMOVE_BG_MODEL_STORAGE_KEY) || "";
+    if (savedId && savedId !== "local-fast") {
+      localStorage.setItem(REMOVE_BG_MODEL_STORAGE_KEY, "local-fast");
+    }
+  } catch {
+    // localStorage may be unavailable when opening from stricter file contexts.
   }
 }
 
