@@ -89,13 +89,22 @@ const els = {
   videoChromaSelect: document.querySelector("#videoChromaSelect"),
   videoPreviewModal: document.querySelector("#videoPreviewModal"),
   videoPreviewPlayer: document.querySelector("#videoPreviewPlayer"),
+  videoPreviewCanvas: document.querySelector("#videoPreviewCanvas"),
+  videoPreviewPlayButton: document.querySelector("#videoPreviewPlayButton"),
+  videoPreviewTimeline: document.querySelector("#videoPreviewTimeline"),
+  videoPreviewTime: document.querySelector("#videoPreviewTime"),
   videoPreviewTitle: document.querySelector("#videoPreviewTitle"),
   videoPreviewMeta: document.querySelector("#videoPreviewMeta"),
   videoPreviewDownloadButton: document.querySelector("#videoPreviewDownloadButton"),
   videoPreviewCloseButton: document.querySelector("#videoPreviewCloseButton"),
   videoBackgroundTools: document.querySelector("#videoBackgroundTools"),
+  videoBackgroundTypeSelect: document.querySelector("#videoBackgroundTypeSelect"),
   videoBackgroundColorInput: document.querySelector("#videoBackgroundColorInput"),
   videoBackgroundColorText: document.querySelector("#videoBackgroundColorText"),
+  videoBackgroundImageField: document.querySelector("#videoBackgroundImageField"),
+  videoBackgroundImageInput: document.querySelector("#videoBackgroundImageInput"),
+  videoBackgroundFitField: document.querySelector("#videoBackgroundFitField"),
+  videoBackgroundFitSelect: document.querySelector("#videoBackgroundFitSelect"),
   videoPreviewExportBackgroundButton: document.querySelector("#videoPreviewExportBackgroundButton"),
   previewModal: document.querySelector("#previewModal"),
   previewImage: document.querySelector("#previewImage"),
@@ -237,6 +246,12 @@ const DEFAULT_VIDEO_CHROMA_OPTIONS = {
   outputAlpha: true,
   outputTransparent: true,
 };
+const DEFAULT_VIDEO_CHROMA_KEY = {
+  keyColor: "#00ff00",
+  tolerance: 80,
+  softness: 40,
+  despill: true,
+};
 const UPSCALE_PROVIDERS = {
   "canvas-resize": {
     label: "普通放大",
@@ -274,6 +289,14 @@ let previewUrl = null;
 let previewOriginalUrl = null;
 let previewItem = null;
 let videoPreviewItem = null;
+const videoPreviewState = {
+  rafId: 0,
+  backgroundImage: null,
+  backgroundImageUrl: "",
+  sourceCanvas: null,
+  foregroundCanvas: null,
+  exportBusy: false,
+};
 let previewMode = "result";
 let previewViewMode = "result";
 let previewCanCompare = false;
@@ -427,16 +450,72 @@ els.videoDownloadButton.addEventListener("click", downloadAllVideos);
 els.videoClearButton.addEventListener("click", clearVideoQueue);
 els.videoPreviewCloseButton.addEventListener("click", () => els.videoPreviewModal.close());
 els.videoPreviewModal.addEventListener("close", () => {
+  stopVideoPreviewRenderLoop();
   els.videoPreviewPlayer.pause();
   els.videoPreviewPlayer.removeAttribute("src");
-  els.videoPreviewPlayer.style.backgroundColor = "";
+  els.videoPreviewPlayer.load();
+  if (els.videoPreviewPlayButton) els.videoPreviewPlayButton.textContent = "播放";
+  if (els.videoPreviewTimeline) els.videoPreviewTimeline.value = "0";
+  if (els.videoPreviewTime) els.videoPreviewTime.textContent = "0:00 / 0:00";
   if (els.videoBackgroundTools) els.videoBackgroundTools.hidden = true;
+  clearVideoPreviewBackgroundImage();
+  clearVideoPreviewCanvas();
   videoPreviewItem = null;
 });
 els.videoPreviewDownloadButton.addEventListener("click", () => {
   if (videoPreviewItem?.blob) downloadBlob(videoPreviewItem.blob, videoPreviewItem.outputName);
 });
+els.videoPreviewPlayButton?.addEventListener("click", async () => {
+  const video = els.videoPreviewPlayer;
+  if (!video?.src) return;
+  if (video.paused) {
+    await video.play();
+    startVideoPreviewRenderLoop();
+  } else {
+    video.pause();
+    renderVideoPreviewFrame();
+  }
+  updateVideoPreviewPlaybackUi();
+});
+els.videoPreviewTimeline?.addEventListener("input", () => {
+  const video = els.videoPreviewPlayer;
+  const duration = Number.isFinite(video?.duration) ? video.duration : 0;
+  if (!video || !duration) return;
+  video.currentTime = (Number(els.videoPreviewTimeline.value) / 1000) * duration;
+  renderVideoPreviewFrame();
+  updateVideoPreviewPlaybackUi();
+});
+els.videoPreviewPlayer?.addEventListener("loadedmetadata", () => {
+  setupVideoPreviewCanvasSize();
+  setVideoPreviewStatus("当前结果为绿幕视频，已在本地实时合成背景。");
+  renderVideoPreviewFrame();
+  updateVideoPreviewPlaybackUi();
+});
+els.videoPreviewPlayer?.addEventListener("play", () => {
+  startVideoPreviewRenderLoop();
+  updateVideoPreviewPlaybackUi();
+});
+els.videoPreviewPlayer?.addEventListener("pause", () => {
+  renderVideoPreviewFrame();
+  updateVideoPreviewPlaybackUi();
+});
+els.videoPreviewPlayer?.addEventListener("ended", () => {
+  stopVideoPreviewRenderLoop();
+  renderVideoPreviewFrame();
+  updateVideoPreviewPlaybackUi();
+});
+els.videoPreviewPlayer?.addEventListener("timeupdate", updateVideoPreviewPlaybackUi);
+els.videoBackgroundTypeSelect?.addEventListener("change", () => {
+  updateVideoPreviewBackground();
+});
 els.videoBackgroundColorInput?.addEventListener("input", () => {
+  updateVideoPreviewBackground();
+});
+els.videoBackgroundFitSelect?.addEventListener("change", () => {
+  updateVideoPreviewBackground();
+});
+els.videoBackgroundImageInput?.addEventListener("change", async (event) => {
+  await loadVideoPreviewBackgroundImage(event.target.files?.[0]);
   updateVideoPreviewBackground();
 });
 els.videoPreviewExportBackgroundButton?.addEventListener("click", async () => {
@@ -6295,8 +6374,9 @@ function openVideoPreview(item) {
   videoPreviewItem = item;
   if (!item.resultUrl) item.resultUrl = URL.createObjectURL(item.blob);
   els.videoPreviewTitle.textContent = item.outputName || "视频预览";
-  els.videoPreviewMeta.textContent = `${formatBytes(item.blob.size)}${item.runninghubTaskId ? ` · taskId: ${item.runninghubTaskId}` : ""}`;
+  setVideoPreviewStatus("正在准备背景预览...");
   els.videoPreviewPlayer.src = item.resultUrl;
+  els.videoPreviewPlayer.currentTime = 0;
   if (els.videoBackgroundTools) els.videoBackgroundTools.hidden = false;
   updateVideoPreviewBackground();
   if (typeof els.videoPreviewModal.showModal === "function") {
@@ -6308,33 +6388,40 @@ function openVideoPreview(item) {
 
 function updateVideoPreviewBackground() {
   const color = els.videoBackgroundColorInput?.value || "#ffffff";
+  const type = getVideoBackgroundSettings().type;
   if (els.videoBackgroundColorText) els.videoBackgroundColorText.textContent = color;
-  if (els.videoPreviewPlayer) els.videoPreviewPlayer.style.backgroundColor = color;
+  const showImage = type === "image";
+  if (els.videoBackgroundImageField) els.videoBackgroundImageField.hidden = !showImage;
+  if (els.videoBackgroundFitField) els.videoBackgroundFitField.hidden = !showImage;
+  renderVideoPreviewFrame();
+  if (videoPreviewItem) setVideoPreviewStatus("背景预览已更新");
 }
 
 async function exportVideoPreviewWithBackground(item) {
   const button = els.videoPreviewExportBackgroundButton;
   if (!item?.blob || !button) return;
-  const color = els.videoBackgroundColorInput?.value || "#ffffff";
   const originalText = button.textContent;
   button.disabled = true;
+  videoPreviewState.exportBusy = true;
   button.textContent = "正在导出...";
+  setVideoPreviewStatus("正在导出背景视频...");
   try {
-    const { blob, mimeType } = await renderVideoWithSolidBackground(item, color);
+    const { blob, mimeType } = await renderVideoWithBackground(item, getVideoBackgroundSettings());
     const outputName = makeBackgroundVideoOutputName(item.outputName || item.file?.name || "video", mimeType);
     downloadBlob(blob, outputName);
-    els.videoPreviewMeta.textContent = `${formatBytes(item.blob.size)} · 已导出背景视频 ${formatBytes(blob.size)}${item.runninghubTaskId ? ` · taskId: ${item.runninghubTaskId}` : ""}`;
+    setVideoPreviewStatus(`导出完成 · ${formatBytes(blob.size)}`);
   } catch (error) {
     console.error(error);
     const message = error?.message || String(error);
-    els.videoPreviewMeta.textContent = `${formatBytes(item.blob.size)} · 背景视频导出失败：${message}`;
+    setVideoPreviewStatus(`背景视频导出失败：${message}`);
   } finally {
     button.disabled = false;
+    videoPreviewState.exportBusy = false;
     button.textContent = originalText;
   }
 }
 
-async function renderVideoWithSolidBackground(item, color) {
+async function renderVideoWithBackground(item, backgroundSettings) {
   if (typeof MediaRecorder === "undefined") throw new Error("当前浏览器不支持视频导出");
   const sourceUrl = item.resultUrl || URL.createObjectURL(item.blob);
   const shouldRevoke = !item.resultUrl;
@@ -6352,9 +6439,11 @@ async function renderVideoWithSolidBackground(item, color) {
     canvas.width = width;
     canvas.height = height;
     if (typeof canvas.captureStream !== "function") throw new Error("当前浏览器不支持背景视频导出");
-    const ctx = canvas.getContext("2d", { alpha: false });
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
     const fps = Math.min(30, Math.max(12, Math.round((item.metadata?.duration || 1) > 20 ? 24 : 30)));
     const stream = canvas.captureStream(fps);
+    const sourceStream = getVideoAudioStream(sourceVideo);
+    sourceStream?.getAudioTracks?.().forEach((track) => stream.addTrack(track));
     const mimeType = getVideoRecorderMimeType();
     const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
     const chunks = [];
@@ -6372,9 +6461,7 @@ async function renderVideoWithSolidBackground(item, color) {
 
     const draw = () => {
       if (!drawing) return;
-      ctx.fillStyle = color;
-      ctx.fillRect(0, 0, width, height);
-      ctx.drawImage(sourceVideo, 0, 0, width, height);
+      drawCompositedVideoFrame(sourceVideo, canvas, ctx, backgroundSettings);
       rafId = requestAnimationFrame(draw);
     };
 
@@ -6396,6 +6483,238 @@ async function renderVideoWithSolidBackground(item, color) {
     sourceVideo.load();
     if (shouldRevoke) URL.revokeObjectURL(sourceUrl);
   }
+}
+
+function setupVideoPreviewCanvasSize() {
+  const video = els.videoPreviewPlayer;
+  const canvas = els.videoPreviewCanvas;
+  if (!video || !canvas) return;
+  const width = video.videoWidth || videoPreviewItem?.metadata?.width || 1280;
+  const height = video.videoHeight || videoPreviewItem?.metadata?.height || 720;
+  canvas.width = width;
+  canvas.height = height;
+}
+
+function clearVideoPreviewCanvas() {
+  const canvas = els.videoPreviewCanvas;
+  const ctx = canvas?.getContext("2d");
+  if (!canvas || !ctx) return;
+  ctx.clearRect(0, 0, canvas.width || 1, canvas.height || 1);
+}
+
+function startVideoPreviewRenderLoop() {
+  if (videoPreviewState.rafId) return;
+  const draw = () => {
+    renderVideoPreviewFrame();
+    videoPreviewState.rafId = requestAnimationFrame(draw);
+  };
+  videoPreviewState.rafId = requestAnimationFrame(draw);
+}
+
+function stopVideoPreviewRenderLoop() {
+  if (!videoPreviewState.rafId) return;
+  cancelAnimationFrame(videoPreviewState.rafId);
+  videoPreviewState.rafId = 0;
+}
+
+function renderVideoPreviewFrame() {
+  const video = els.videoPreviewPlayer;
+  const canvas = els.videoPreviewCanvas;
+  if (!video || !canvas || !video.videoWidth || !video.videoHeight) return;
+  if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) setupVideoPreviewCanvasSize();
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  drawCompositedVideoFrame(video, canvas, ctx, getVideoBackgroundSettings());
+}
+
+function drawCompositedVideoFrame(video, canvas, ctx, backgroundSettings) {
+  const width = canvas.width || video.videoWidth || 1;
+  const height = canvas.height || video.videoHeight || 1;
+  drawVideoBackground(ctx, width, height, backgroundSettings);
+  const foreground = getChromaKeyForegroundCanvas(video, width, height);
+  ctx.drawImage(foreground, 0, 0, width, height);
+}
+
+function getChromaKeyForegroundCanvas(video, width, height) {
+  const sourceCanvas = getSizedReusableCanvas("sourceCanvas", width, height);
+  const foregroundCanvas = getSizedReusableCanvas("foregroundCanvas", width, height);
+  const sourceCtx = sourceCanvas.getContext("2d", { willReadFrequently: true });
+  const foregroundCtx = foregroundCanvas.getContext("2d", { willReadFrequently: true });
+  sourceCtx.clearRect(0, 0, width, height);
+  sourceCtx.drawImage(video, 0, 0, width, height);
+  const imageData = sourceCtx.getImageData(0, 0, width, height);
+  applyVideoChromaKeyToImageData(imageData, DEFAULT_VIDEO_CHROMA_KEY);
+  foregroundCtx.clearRect(0, 0, width, height);
+  foregroundCtx.putImageData(imageData, 0, 0);
+  return foregroundCanvas;
+}
+
+function getSizedReusableCanvas(key, width, height) {
+  let canvas = videoPreviewState[key];
+  if (!canvas) {
+    canvas = document.createElement("canvas");
+    videoPreviewState[key] = canvas;
+  }
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+  return canvas;
+}
+
+function applyVideoChromaKeyToImageData(imageData, options) {
+  const data = imageData.data;
+  const key = hexToRgb(options.keyColor) || { r: 0, g: 255, b: 0 };
+  const tolerance = Number(options.tolerance) || 80;
+  const softness = Number(options.softness) || 40;
+  for (let index = 0; index < data.length; index += 4) {
+    const r = data[index];
+    const g = data[index + 1];
+    const b = data[index + 2];
+    const originalAlpha = data[index + 3];
+    if (!originalAlpha) continue;
+    const distance = colorDistanceRgb(r, g, b, key.r, key.g, key.b);
+    const greenAdvantage = g - Math.max(r, b);
+    const keyDistanceMatte = 1 - smoothstep(tolerance, tolerance + softness, distance);
+    const greenMatte = g > 70 ? smoothstep(tolerance * 0.34, tolerance * 0.34 + softness, greenAdvantage) : 0;
+    const backgroundAmount = clampNumber(Math.max(keyDistanceMatte, greenMatte), 0, 1);
+    const edgeAmount = clampNumber(1 - Math.abs(backgroundAmount - 0.5) * 2, 0, 1);
+    const alpha = Math.round(originalAlpha * (1 - backgroundAmount));
+    if (options.despill && alpha > 0 && greenAdvantage > 6) {
+      const neutralGreen = Math.max(r, b) + 8;
+      const despillAmount = clampNumber(backgroundAmount * 0.78 + edgeAmount * 0.42, 0, 0.9);
+      data[index + 1] = Math.round(g + (Math.min(g, neutralGreen) - g) * despillAmount);
+    }
+    data[index + 3] = alpha;
+  }
+}
+
+function drawVideoBackground(ctx, width, height, settings) {
+  ctx.clearRect(0, 0, width, height);
+  if (settings.type === "transparent") return;
+  if (settings.type === "image" && settings.image) {
+    drawBackgroundImage(ctx, settings.image, width, height, settings.fit);
+    return;
+  }
+  if (settings.type === "gradient") {
+    const gradient = ctx.createLinearGradient(0, 0, width, height);
+    gradient.addColorStop(0, settings.color);
+    gradient.addColorStop(1, mixHexColor(settings.color, "#06100d", 0.42));
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, width, height);
+    return;
+  }
+  ctx.fillStyle = settings.color || "#ffffff";
+  ctx.fillRect(0, 0, width, height);
+}
+
+function drawBackgroundImage(ctx, image, width, height, fit = "cover") {
+  const imageWidth = image.naturalWidth || image.width;
+  const imageHeight = image.naturalHeight || image.height;
+  if (!imageWidth || !imageHeight) return;
+  if (fit === "stretch") {
+    ctx.drawImage(image, 0, 0, width, height);
+    return;
+  }
+  const scale = fit === "contain"
+    ? Math.min(width / imageWidth, height / imageHeight)
+    : Math.max(width / imageWidth, height / imageHeight);
+  const drawWidth = imageWidth * scale;
+  const drawHeight = imageHeight * scale;
+  const x = (width - drawWidth) / 2;
+  const y = (height - drawHeight) / 2;
+  ctx.drawImage(image, x, y, drawWidth, drawHeight);
+}
+
+function getVideoBackgroundSettings() {
+  return {
+    type: els.videoBackgroundTypeSelect?.value || "color",
+    color: els.videoBackgroundColorInput?.value || "#ffffff",
+    image: videoPreviewState.backgroundImage,
+    fit: els.videoBackgroundFitSelect?.value || "cover",
+  };
+}
+
+async function loadVideoPreviewBackgroundImage(file) {
+  clearVideoPreviewBackgroundImage();
+  if (!file) return;
+  const url = URL.createObjectURL(file);
+  const image = new Image();
+  image.decoding = "async";
+  image.src = url;
+  await image.decode();
+  videoPreviewState.backgroundImage = image;
+  videoPreviewState.backgroundImageUrl = url;
+  if (els.videoBackgroundTypeSelect) els.videoBackgroundTypeSelect.value = "image";
+}
+
+function clearVideoPreviewBackgroundImage() {
+  if (videoPreviewState.backgroundImageUrl) URL.revokeObjectURL(videoPreviewState.backgroundImageUrl);
+  videoPreviewState.backgroundImage = null;
+  videoPreviewState.backgroundImageUrl = "";
+  if (els.videoBackgroundImageInput) els.videoBackgroundImageInput.value = "";
+}
+
+function updateVideoPreviewPlaybackUi() {
+  const video = els.videoPreviewPlayer;
+  if (!video) return;
+  const duration = Number.isFinite(video.duration) ? video.duration : 0;
+  const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+  if (els.videoPreviewPlayButton) els.videoPreviewPlayButton.textContent = video.paused ? "播放" : "暂停";
+  if (els.videoPreviewTimeline) {
+    els.videoPreviewTimeline.disabled = !duration;
+    els.videoPreviewTimeline.value = duration ? String(Math.round((currentTime / duration) * 1000)) : "0";
+  }
+  if (els.videoPreviewTime) {
+    els.videoPreviewTime.textContent = `${formatVideoClock(currentTime)} / ${formatVideoClock(duration)}`;
+  }
+}
+
+function setVideoPreviewStatus(message) {
+  if (!els.videoPreviewMeta || !videoPreviewItem) return;
+  const task = videoPreviewItem.runninghubTaskId ? ` · taskId: ${videoPreviewItem.runninghubTaskId}` : "";
+  els.videoPreviewMeta.textContent = `${formatBytes(videoPreviewItem.blob.size)} · ${message}${task}`;
+}
+
+function getVideoAudioStream(video) {
+  try {
+    return video.captureStream?.() || video.mozCaptureStream?.() || null;
+  } catch {
+    return null;
+  }
+}
+
+function formatVideoClock(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+  const total = Math.floor(seconds);
+  const minutes = Math.floor(total / 60);
+  const rest = String(total % 60).padStart(2, "0");
+  return `${minutes}:${rest}`;
+}
+
+function hexToRgb(hex) {
+  const normalized = String(hex || "").replace("#", "").trim();
+  if (!/^[0-9a-f]{6}$/i.test(normalized)) return null;
+  return {
+    r: parseInt(normalized.slice(0, 2), 16),
+    g: parseInt(normalized.slice(2, 4), 16),
+    b: parseInt(normalized.slice(4, 6), 16),
+  };
+}
+
+function colorDistanceRgb(r1, g1, b1, r2, g2, b2) {
+  return Math.hypot(r1 - r2, g1 - g2, b1 - b2);
+}
+
+function smoothstep(edge0, edge1, value) {
+  const t = clampNumber((value - edge0) / Math.max(1, edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+function mixHexColor(colorA, colorB, amount) {
+  const a = hexToRgb(colorA) || { r: 255, g: 255, b: 255 };
+  const b = hexToRgb(colorB) || { r: 0, g: 0, b: 0 };
+  const mix = (left, right) => Math.round(left + (right - left) * amount).toString(16).padStart(2, "0");
+  return `#${mix(a.r, b.r)}${mix(a.g, b.g)}${mix(a.b, b.b)}`;
 }
 
 function waitForMediaEvent(media, eventName) {

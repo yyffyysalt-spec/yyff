@@ -2646,18 +2646,42 @@ select,
   font-weight: 900;
 }
 
-.video-preview-wrap video {
+.video-preview-wrap {
+  position: relative;
+}
+
+.video-preview-canvas {
   max-width: 100%;
   max-height: 100%;
   width: auto;
   height: auto;
   border-radius: 8px;
-  background: #000;
+  background:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.18) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.18) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.18) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.18) 75%);
+  background-color: rgba(6, 14, 13, 0.5);
+  background-position:
+    0 0,
+    0 10px,
+    10px -10px,
+    -10px 0;
+  background-size: 20px 20px;
+}
+
+.video-preview-source {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .video-background-tools {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   min-height: 42px;
   padding: 5px 6px 5px 12px;
@@ -2691,6 +2715,51 @@ select,
   font-weight: 800;
 }
 
+.video-background-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  max-width: 152px;
+  padding: 3px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.video-background-field[hidden] {
+  display: none !important;
+}
+
+.video-background-field span {
+  white-space: nowrap;
+}
+
+.video-background-field select {
+  min-width: 64px;
+  max-width: 90px;
+  border: 0;
+  background: transparent;
+  color: var(--text-main);
+  font: inherit;
+  outline: none;
+}
+
+.video-background-image-field {
+  cursor: pointer;
+}
+
+.video-background-image-field input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .video-background-color input {
   width: 26px;
   height: 26px;
@@ -2698,6 +2767,25 @@ select,
   border-radius: 50%;
   background: transparent;
   padding: 0;
+}
+
+.video-preview-controls {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding-top: 12px;
+}
+
+.video-preview-controls input[type="range"] {
+  width: 100%;
+}
+
+#videoPreviewTime {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .stage-header h2,

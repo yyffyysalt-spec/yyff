@@ -545,9 +545,30 @@
           <div class="preview-actions">
             <div class="video-background-tools" id="videoBackgroundTools" hidden>
               <span class="video-background-title">背景填充 / 背景替换</span>
+              <label class="video-background-field" title="选择背景类型">
+                <span>类型</span>
+                <select id="videoBackgroundTypeSelect">
+                  <option value="color">纯色</option>
+                  <option value="transparent">透明</option>
+                  <option value="gradient">渐变</option>
+                  <option value="image">图片</option>
+                </select>
+              </label>
               <label class="video-background-color" title="选择导出背景色">
                 <input id="videoBackgroundColorInput" type="color" value="#ffffff" />
                 <span id="videoBackgroundColorText">#ffffff</span>
+              </label>
+              <label class="video-background-field video-background-image-field" id="videoBackgroundImageField" title="选择背景图片" hidden>
+                <input id="videoBackgroundImageInput" type="file" accept="image/*" />
+                <span>背景图</span>
+              </label>
+              <label class="video-background-field" id="videoBackgroundFitField" title="选择图片填充方式" hidden>
+                <span>适配</span>
+                <select id="videoBackgroundFitSelect">
+                  <option value="cover">铺满</option>
+                  <option value="contain">完整</option>
+                  <option value="stretch">拉伸</option>
+                </select>
               </label>
               <button class="small-button" id="videoPreviewExportBackgroundButton" type="button">导出背景视频</button>
             </div>
@@ -558,7 +579,13 @@
           </div>
         </div>
         <div class="preview-image-wrap video-preview-wrap">
-          <video id="videoPreviewPlayer" controls playsinline></video>
+          <canvas id="videoPreviewCanvas" class="video-preview-canvas"></canvas>
+          <video id="videoPreviewPlayer" class="video-preview-source" playsinline muted></video>
+        </div>
+        <div class="video-preview-controls">
+          <button class="small-button" id="videoPreviewPlayButton" type="button">播放</button>
+          <input id="videoPreviewTimeline" type="range" min="0" max="1000" value="0" aria-label="视频预览进度" />
+          <span id="videoPreviewTime">0:00 / 0:00</span>
         </div>
       </div>
     </dialog>
