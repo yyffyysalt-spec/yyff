@@ -12,8 +12,8 @@ window.APP_CONFIG = {
   RUNNINGHUB_AI_APP_REMOVE_BG_PROXY_URL: "https://runninghub-ai-removebg-worker.ste611003.workers.dev",
   RUNNINGHUB_AI_APP_REMOVE_BG_APP_ID: "1950866462321876993",
   RUNNINGHUB_AI_APP_REMOVE_BG_LABEL: "RunningHub AI 抠图",
-  VIDEO_UPSCALE_PROXY_URL: "",
-  VIDEO_CHROMA_PROXY_URL: "",
+  VIDEO_UPSCALE_PROXY_URL: "https://runninghub-video-upscale-worker.ste611003.workers.dev",
+  VIDEO_CHROMA_PROXY_URL: "https://runninghub-video-chroma-worker.ste611003.workers.dev",
   VIDEO_UPSCALE_WORKFLOWS: [
     {
       id: "runninghub-video-upscale",
