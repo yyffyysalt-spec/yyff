@@ -92,7 +92,6 @@ const els = {
   videoChromaToleranceSelect: document.querySelector("#videoChromaToleranceSelect"),
   videoChromaFeatherSelect: document.querySelector("#videoChromaFeatherSelect"),
   videoSpillToggle: document.querySelector("#videoSpillToggle"),
-  videoConfigNotice: document.querySelector("#videoConfigNotice"),
   videoPreviewModal: document.querySelector("#videoPreviewModal"),
   videoPreviewPlayer: document.querySelector("#videoPreviewPlayer"),
   videoPreviewTitle: document.querySelector("#videoPreviewTitle"),
@@ -5908,17 +5907,22 @@ function updateVideoOptionVisibility() {
   const mode = getSelectedVideoMode();
   const needsUpscale = mode === "video-upscale" || mode === "video-chroma-upscale";
   const needsChroma = mode === "video-chroma" || mode === "video-chroma-upscale";
-  const missingUpscaleConfig = needsUpscale && !VIDEO_UPSCALE_PROXY_URL;
-  const missingChromaConfig = needsChroma && !VIDEO_CHROMA_PROXY_URL;
   document.querySelectorAll('[data-video-option="video-upscale-model"]').forEach((element) => {
     element.hidden = !needsUpscale;
   });
   document.querySelectorAll('[data-video-option="video-chroma-model"], [data-video-option="chroma-params"]').forEach((element) => {
     element.hidden = !needsChroma;
   });
-  if (els.videoConfigNotice) {
-    els.videoConfigNotice.hidden = !(missingUpscaleConfig || missingChromaConfig);
+}
+
+function getVideoConfigWarning() {
+  const mode = getSelectedVideoMode();
+  const needsUpscale = mode === "video-upscale" || mode === "video-chroma-upscale";
+  const needsChroma = mode === "video-chroma" || mode === "video-chroma-upscale";
+  if ((needsUpscale && !VIDEO_UPSCALE_PROXY_URL) || (needsChroma && !VIDEO_CHROMA_PROXY_URL)) {
+    return "视频 RunningHub 工作流未配置，请先补充 workflowId 和节点参数。";
   }
+  return "";
 }
 
 function updateUi() {
@@ -5968,9 +5972,10 @@ function updateUi() {
   if (activeVideo) {
     els.stageTitle.textContent = "视频任务";
     els.queueStatus.textContent = videoState.items.length ? `${videoState.items.length} 个视频` : "待上传";
-    els.hintText.textContent = videoState.items.length
+    const videoConfigWarning = getVideoConfigWarning();
+    els.hintText.textContent = videoConfigWarning || (videoState.items.length
       ? "视频任务会在这里显示 RunningHub 处理进度、taskId、预览与下载。"
-      : "上传视频后会在这里显示首帧、信息与处理结果。";
+      : "上传视频后会在这里显示首帧、信息与处理结果。");
   } else if (activeImage) {
     els.stageTitle.textContent = "图片任务";
     els.hintText.textContent = missingApiCredentials
