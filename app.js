@@ -291,6 +291,10 @@ const videoPreviewState = {
   sourceCanvas: null,
   foregroundCanvas: null,
   exportBusy: false,
+  exportedBlob: null,
+  exportedUrl: "",
+  exportedName: "",
+  exportedSettingsKey: "",
 };
 let previewMode = "result";
 let previewViewMode = "result";
@@ -454,6 +458,7 @@ els.videoPreviewModal.addEventListener("close", () => {
   if (els.videoPreviewTime) els.videoPreviewTime.textContent = "0:00 / 0:00";
   if (els.videoBackgroundTools) els.videoBackgroundTools.hidden = true;
   clearVideoPreviewCanvas();
+  clearVideoPreviewExport();
   videoPreviewItem = null;
 });
 els.videoPreviewDownloadButton.addEventListener("click", () => {
@@ -6362,6 +6367,8 @@ function openVideoPreview(item) {
   if (!item.resultUrl) item.resultUrl = URL.createObjectURL(item.blob);
   els.videoPreviewTitle.textContent = item.outputName || "视频预览";
   setVideoPreviewStatus("正在准备背景预览...");
+  clearVideoPreviewExport();
+  if (els.videoPreviewExportBackgroundButton) els.videoPreviewExportBackgroundButton.textContent = "导出背景视频";
   if (els.videoBackgroundTypeSelect) {
     els.videoBackgroundTypeSelect.value = "transparent";
     refreshCustomSelect(els.videoBackgroundTypeSelect);
@@ -6382,25 +6389,38 @@ function updateVideoPreviewBackground() {
   const type = getVideoBackgroundSettings().type;
   if (els.videoBackgroundColorText) els.videoBackgroundColorText.textContent = color;
   if (els.videoBackgroundColorField) els.videoBackgroundColorField.hidden = type !== "color";
+  markVideoPreviewExportDirty();
   renderVideoPreviewFrame();
-  if (videoPreviewItem) setVideoPreviewStatus("背景预览已更新");
+  if (videoPreviewItem) {
+    setVideoPreviewStatus(type === "transparent"
+      ? "透明背景预览中，可导出透明 WebM；若浏览器不支持透明编码，请改用颜色背景。"
+      : "颜色背景预览已更新，导出后将生成带背景的新视频。");
+  }
 }
 
 async function exportVideoPreviewWithBackground(item) {
   const button = els.videoPreviewExportBackgroundButton;
   if (!item?.blob || !button) return;
+  const settings = getVideoBackgroundSettings();
+  const settingsKey = getVideoBackgroundSettingsKey(settings);
+  if (videoPreviewState.exportedBlob && videoPreviewState.exportedSettingsKey === settingsKey) {
+    downloadBlob(videoPreviewState.exportedBlob, videoPreviewState.exportedName || makeBackgroundVideoOutputName(item.outputName || item.file?.name || "video"));
+    setVideoPreviewStatus("导出完成，下载的是新合成视频。");
+    return;
+  }
   const originalText = button.textContent;
-  const backgroundType = getVideoBackgroundSettings().type;
+  const backgroundType = settings.type;
   button.disabled = true;
   videoPreviewState.exportBusy = true;
   button.textContent = "正在导出...";
-  setVideoPreviewStatus(backgroundType === "transparent" ? "正在导出透明背景视频..." : "正在导出颜色背景视频...");
+  setVideoPreviewStatus("正在重新合成并导出背景视频...");
   try {
-    const { blob, mimeType } = await renderVideoWithBackground(item, getVideoBackgroundSettings());
+    const { blob, mimeType } = await renderVideoWithBackground(item, settings);
     const outputName = makeBackgroundVideoOutputName(item.outputName || item.file?.name || "video", mimeType);
+    setVideoPreviewExport(blob, outputName, settingsKey);
     downloadBlob(blob, outputName);
     const alphaHint = backgroundType === "transparent" ? " · 当前浏览器可能不支持透明视频编码，如导出后背景变黑，请改用颜色背景导出。" : "";
-    setVideoPreviewStatus(`导出完成，可下载新视频 · ${formatBytes(blob.size)}${alphaHint}`);
+    setVideoPreviewStatus(`导出完成，下载的是新合成视频。${alphaHint}`);
   } catch (error) {
     console.error(error);
     const message = error?.message || String(error);
@@ -6408,7 +6428,7 @@ async function exportVideoPreviewWithBackground(item) {
   } finally {
     button.disabled = false;
     videoPreviewState.exportBusy = false;
-    button.textContent = originalText;
+    button.textContent = videoPreviewState.exportedBlob ? "下载新视频" : originalText;
   }
 }
 
@@ -6436,8 +6456,19 @@ async function renderVideoWithBackground(item, backgroundSettings) {
     const sourceStream = getVideoAudioStream(sourceVideo);
     sourceStream?.getAudioTracks?.().forEach((track) => stream.addTrack(track));
     const mimeType = getVideoRecorderMimeType();
+    console.info("[video-background-export]", {
+      backgroundType: backgroundSettings.type,
+      selectedColor: backgroundSettings.color,
+      videoWidth: width,
+      videoHeight: height,
+      mimeType: mimeType || "video/webm",
+    });
+    if (backgroundSettings.type === "transparent" && !/vp8|vp9/i.test(mimeType)) {
+      console.warn("当前浏览器可能不支持透明视频导出，建议使用颜色背景导出。");
+    }
     const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
     const chunks = [];
+    const exportScratch = createVideoRenderScratch();
     let rafId = 0;
     let drawing = true;
 
@@ -6452,11 +6483,28 @@ async function renderVideoWithBackground(item, backgroundSettings) {
 
     const draw = () => {
       if (!drawing) return;
-      drawCompositedVideoFrame(sourceVideo, canvas, ctx, backgroundSettings);
+      renderVideoFrameToCanvas({
+        video: sourceVideo,
+        canvas,
+        ctx,
+        backgroundType: backgroundSettings.type,
+        backgroundColor: backgroundSettings.color,
+        chromaOptions: DEFAULT_VIDEO_CHROMA_KEY,
+        scratch: exportScratch,
+      });
       rafId = requestAnimationFrame(draw);
     };
 
     sourceVideo.currentTime = 0;
+    renderVideoFrameToCanvas({
+      video: sourceVideo,
+      canvas,
+      ctx,
+      backgroundType: backgroundSettings.type,
+      backgroundColor: backgroundSettings.color,
+      chromaOptions: DEFAULT_VIDEO_CHROMA_KEY,
+      scratch: exportScratch,
+    });
     recorder.start(500);
     draw();
     await sourceVideo.play();
@@ -6466,7 +6514,8 @@ async function renderVideoWithBackground(item, backgroundSettings) {
     if (recorder.state !== "inactive") recorder.stop();
     await stopped;
     const blob = new Blob(chunks, { type: recorder.mimeType || "video/webm" });
-    if (!blob.size) throw new Error("背景视频导出为空");
+    if (!blob.size) throw new Error("导出失败：没有生成视频数据。");
+    if (blob.size < 1024) throw new Error("导出失败：生成的视频数据异常偏小。");
     return { blob, mimeType: recorder.mimeType || "video/webm" };
   } finally {
     sourceVideo.pause();
@@ -6514,29 +6563,16 @@ function renderVideoPreviewFrame() {
   if (!video || !canvas || !video.videoWidth || !video.videoHeight) return;
   if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) setupVideoPreviewCanvasSize();
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  drawCompositedVideoFrame(video, canvas, ctx, getVideoBackgroundSettings());
-}
-
-function drawCompositedVideoFrame(video, canvas, ctx, backgroundSettings) {
-  const width = canvas.width || video.videoWidth || 1;
-  const height = canvas.height || video.videoHeight || 1;
-  drawVideoBackground(ctx, width, height, backgroundSettings);
-  const foreground = getChromaKeyForegroundCanvas(video, width, height);
-  ctx.drawImage(foreground, 0, 0, width, height);
-}
-
-function getChromaKeyForegroundCanvas(video, width, height) {
-  const sourceCanvas = getSizedReusableCanvas("sourceCanvas", width, height);
-  const foregroundCanvas = getSizedReusableCanvas("foregroundCanvas", width, height);
-  const sourceCtx = sourceCanvas.getContext("2d", { willReadFrequently: true });
-  const foregroundCtx = foregroundCanvas.getContext("2d", { willReadFrequently: true });
-  sourceCtx.clearRect(0, 0, width, height);
-  sourceCtx.drawImage(video, 0, 0, width, height);
-  const imageData = sourceCtx.getImageData(0, 0, width, height);
-  applyVideoChromaKeyToImageData(imageData, DEFAULT_VIDEO_CHROMA_KEY);
-  foregroundCtx.clearRect(0, 0, width, height);
-  foregroundCtx.putImageData(imageData, 0, 0);
-  return foregroundCanvas;
+  const settings = getVideoBackgroundSettings();
+  renderVideoFrameToCanvas({
+    video,
+    canvas,
+    ctx,
+    backgroundType: settings.type,
+    backgroundColor: settings.color,
+    chromaOptions: DEFAULT_VIDEO_CHROMA_KEY,
+    scratch: videoPreviewState,
+  });
 }
 
 function getSizedReusableCanvas(key, width, height) {
@@ -6552,11 +6588,58 @@ function getSizedReusableCanvas(key, width, height) {
   return canvas;
 }
 
+function createVideoRenderScratch() {
+  return {
+    sourceCanvas: null,
+    foregroundCanvas: null,
+  };
+}
+
+function renderVideoFrameToCanvas({
+  video,
+  canvas,
+  ctx = canvas.getContext("2d", { willReadFrequently: true }),
+  backgroundType = "transparent",
+  backgroundColor = "#ffffff",
+  chromaOptions = DEFAULT_VIDEO_CHROMA_KEY,
+  scratch = videoPreviewState,
+}) {
+  const width = canvas.width || video.videoWidth || 1;
+  const height = canvas.height || video.videoHeight || 1;
+  drawVideoBackground(ctx, width, height, { type: backgroundType, color: backgroundColor });
+  const sourceCanvas = getSizedCanvasFromScratch(scratch, "sourceCanvas", width, height);
+  const foregroundCanvas = getSizedCanvasFromScratch(scratch, "foregroundCanvas", width, height);
+  const sourceCtx = sourceCanvas.getContext("2d", { willReadFrequently: true });
+  const foregroundCtx = foregroundCanvas.getContext("2d", { willReadFrequently: true });
+  sourceCtx.clearRect(0, 0, width, height);
+  sourceCtx.drawImage(video, 0, 0, width, height);
+  const imageData = sourceCtx.getImageData(0, 0, width, height);
+  applyVideoChromaKeyToImageData(imageData, chromaOptions);
+  foregroundCtx.clearRect(0, 0, width, height);
+  foregroundCtx.putImageData(imageData, 0, 0);
+  ctx.drawImage(foregroundCanvas, 0, 0, width, height);
+}
+
+function getSizedCanvasFromScratch(scratch, key, width, height) {
+  if (scratch === videoPreviewState) return getSizedReusableCanvas(key, width, height);
+  let canvas = scratch[key];
+  if (!canvas) {
+    canvas = document.createElement("canvas");
+    scratch[key] = canvas;
+  }
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+  return canvas;
+}
+
 function applyVideoChromaKeyToImageData(imageData, options) {
   const data = imageData.data;
   const key = hexToRgb(options.keyColor) || { r: 0, g: 255, b: 0 };
   const tolerance = Number(options.tolerance) || 80;
   const softness = Number(options.softness) || 40;
+  const dominanceThreshold = Math.max(30, tolerance * 0.45);
   for (let index = 0; index < data.length; index += 4) {
     const r = data[index];
     const g = data[index + 1];
@@ -6565,12 +6648,17 @@ function applyVideoChromaKeyToImageData(imageData, options) {
     if (!originalAlpha) continue;
     const distance = colorDistanceRgb(r, g, b, key.r, key.g, key.b);
     const greenAdvantage = g - Math.max(r, b);
-    const keyDistanceMatte = 1 - smoothstep(tolerance, tolerance + softness, distance);
-    const greenMatte = g > 70 ? smoothstep(tolerance * 0.34, tolerance * 0.34 + softness, greenAdvantage) : 0;
-    const backgroundAmount = clampNumber(Math.max(keyDistanceMatte, greenMatte), 0, 1);
+    const redGap = g - r;
+    const blueGap = g - b;
+    const ratioGreen = g > 80 && g > r * 1.18 && g > b * 1.18 && redGap > 22 && blueGap > 22;
+    const strongGreen = g > 80 && greenAdvantage > dominanceThreshold && redGap > dominanceThreshold * 0.7 && blueGap > dominanceThreshold * 0.7;
+    const keyDistanceMatte = 1 - smoothstep(tolerance * 0.9, tolerance * 0.9 + softness * 1.35, distance);
+    const dominanceMatte = smoothstep(dominanceThreshold * 0.72, dominanceThreshold + softness, Math.min(redGap, blueGap));
+    const ratioMatte = ratioGreen ? smoothstep(18, 18 + softness, Math.min(redGap, blueGap)) : 0;
+    const backgroundAmount = clampNumber(Math.max(keyDistanceMatte, dominanceMatte, ratioMatte, strongGreen ? 0.92 : 0), 0, 1);
     const edgeAmount = clampNumber(1 - Math.abs(backgroundAmount - 0.5) * 2, 0, 1);
     const alpha = Math.round(originalAlpha * (1 - backgroundAmount));
-    if (options.despill && alpha > 0 && greenAdvantage > 6) {
+    if (options.despill && alpha > 0 && greenAdvantage > 4) {
       const neutralGreen = Math.max(r, b) + 8;
       const despillAmount = clampNumber(backgroundAmount * 0.78 + edgeAmount * 0.42, 0, 0.9);
       data[index + 1] = Math.round(g + (Math.min(g, neutralGreen) - g) * despillAmount);
@@ -6592,6 +6680,38 @@ function getVideoBackgroundSettings() {
     type,
     color: els.videoBackgroundColorInput?.value || "#ffffff",
   };
+}
+
+function getVideoBackgroundSettingsKey(settings) {
+  return `${settings.type}:${settings.type === "color" ? settings.color : "transparent"}`;
+}
+
+function setVideoPreviewExport(blob, name, settingsKey) {
+  clearVideoPreviewExport();
+  videoPreviewState.exportedBlob = blob;
+  videoPreviewState.exportedUrl = URL.createObjectURL(blob);
+  videoPreviewState.exportedName = name;
+  videoPreviewState.exportedSettingsKey = settingsKey;
+  if (els.videoPreviewExportBackgroundButton) els.videoPreviewExportBackgroundButton.textContent = "下载新视频";
+}
+
+function clearVideoPreviewExport() {
+  if (videoPreviewState.exportedUrl) URL.revokeObjectURL(videoPreviewState.exportedUrl);
+  videoPreviewState.exportedBlob = null;
+  videoPreviewState.exportedUrl = "";
+  videoPreviewState.exportedName = "";
+  videoPreviewState.exportedSettingsKey = "";
+  if (els.videoPreviewExportBackgroundButton && !videoPreviewState.exportBusy) {
+    els.videoPreviewExportBackgroundButton.textContent = "导出背景视频";
+  }
+}
+
+function markVideoPreviewExportDirty() {
+  if (!videoPreviewState.exportedBlob || videoPreviewState.exportBusy) return;
+  const settingsKey = getVideoBackgroundSettingsKey(getVideoBackgroundSettings());
+  if (settingsKey !== videoPreviewState.exportedSettingsKey && els.videoPreviewExportBackgroundButton) {
+    els.videoPreviewExportBackgroundButton.textContent = "导出背景视频";
+  }
 }
 
 function updateVideoPreviewPlaybackUi() {
