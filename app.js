@@ -102,7 +102,6 @@ const els = {
   videoBackgroundColorField: document.querySelector("#videoBackgroundColorField"),
   videoBackgroundColorInput: document.querySelector("#videoBackgroundColorInput"),
   videoBackgroundColorText: document.querySelector("#videoBackgroundColorText"),
-  videoPreviewExportBackgroundButton: document.querySelector("#videoPreviewExportBackgroundButton"),
   previewModal: document.querySelector("#previewModal"),
   previewImage: document.querySelector("#previewImage"),
   previewCompareView: document.querySelector("#previewCompareView"),
@@ -461,8 +460,9 @@ els.videoPreviewModal.addEventListener("close", () => {
   clearVideoPreviewExport();
   videoPreviewItem = null;
 });
-els.videoPreviewDownloadButton.addEventListener("click", () => {
-  if (videoPreviewItem?.blob) downloadBlob(videoPreviewItem.blob, videoPreviewItem.outputName);
+els.videoPreviewDownloadButton.addEventListener("click", async () => {
+  if (!videoPreviewItem?.blob) return;
+  await downloadVideoPreviewOutput(videoPreviewItem);
 });
 els.videoPreviewPlayButton?.addEventListener("click", async () => {
   const video = els.videoPreviewPlayer;
@@ -486,7 +486,9 @@ els.videoPreviewTimeline?.addEventListener("input", () => {
 });
 els.videoPreviewPlayer?.addEventListener("loadedmetadata", () => {
   setupVideoPreviewCanvasSize();
-  setVideoPreviewStatus("当前结果为绿幕视频，已在本地实时合成背景。");
+  setVideoPreviewStatus(videoPreviewItem?.requiresLocalChromaKey === false
+    ? "当前结果已带透明通道，可直接预览。"
+    : "当前结果为绿幕视频，已在本地实时合成背景。");
   renderVideoPreviewFrame();
   updateVideoPreviewPlaybackUi();
 });
@@ -510,11 +512,6 @@ els.videoBackgroundTypeSelect?.addEventListener("change", () => {
 els.videoBackgroundColorInput?.addEventListener("input", () => {
   updateVideoPreviewBackground();
 });
-els.videoPreviewExportBackgroundButton?.addEventListener("click", async () => {
-  if (!videoPreviewItem?.blob) return;
-  await exportVideoPreviewWithBackground(videoPreviewItem);
-});
-
 ["dragenter", "dragover"].forEach((name) => {
   els.mainWorkspace.addEventListener(name, (event) => {
     event.preventDefault();
@@ -1641,6 +1638,9 @@ async function createVideoItem(file) {
     blob: null,
     resultUrl: "",
     outputName: makeVideoOutputName(file.name, getSelectedVideoMode()),
+    resultKind: "",
+    requiresLocalChromaKey: true,
+    resultMimeType: "",
     runninghubTaskId: "",
     createdAt: Date.now(),
     startedAt: null,
@@ -1826,6 +1826,9 @@ async function processVideoQueue() {
   for (const item of videoState.items) {
     item.blob = null;
     item.resultUrl = "";
+    item.resultKind = "";
+    item.requiresLocalChromaKey = true;
+    item.resultMimeType = "";
     item.runninghubTaskId = "";
     item.errorInfo = null;
     item.card.classList.remove("has-error");
@@ -1842,6 +1845,9 @@ async function processVideoQueue() {
       const output = await processVideoItem(item, options);
       item.blob = output.blob;
       item.outputName = output.name || item.outputName;
+      item.resultKind = output.resultKind || "";
+      item.requiresLocalChromaKey = output.requiresLocalChromaKey !== false;
+      item.resultMimeType = output.mimeType || item.blob.type || "";
       if (item.resultUrl) URL.revokeObjectURL(item.resultUrl);
       item.resultUrl = URL.createObjectURL(item.blob);
       item.card.classList.add("has-result");
@@ -1975,7 +1981,13 @@ async function runVideoWorkerTask({ item, proxyUrl, file, fileName, label, outpu
     if (statusResponse.ok && /^video\//i.test(contentType)) {
       const blob = await statusResponse.blob();
       item.runninghubTaskId = statusResponse.headers.get("X-Video-TaskId") || taskId || "";
-      return { blob, name: outputName };
+      return {
+        blob,
+        name: outputName,
+        mimeType: blob.type || contentType,
+        resultKind: statusResponse.headers.get("X-Video-Result-Kind") || "",
+        requiresLocalChromaKey: statusResponse.headers.get("X-Video-Requires-Local-Chroma-Key") !== "false",
+      };
     }
     const data = await readVideoWorkerJson(statusResponse);
     if (!statusResponse.ok || data?.ok === false || data?.status === "failed") {
@@ -1996,7 +2008,13 @@ async function runVideoWorkerTask({ item, proxyUrl, file, fileName, label, outpu
         workerUrl: proxyUrl,
       });
       item.runninghubTaskId = data.taskId || taskId || "";
-      return { blob: resultBlob, name: data.filename || outputName };
+      return {
+        blob: resultBlob,
+        name: data.filename || outputName,
+        mimeType: data.mimeType || resultBlob.type || "",
+        resultKind: data.resultKind || "",
+        requiresLocalChromaKey: data.requiresLocalChromaKey !== false,
+      };
     }
   }
 
@@ -6356,6 +6374,9 @@ function cleanupVideoItem(item) {
   item.resultUrl = "";
   item.file = null;
   item.blob = null;
+  item.resultKind = "";
+  item.requiresLocalChromaKey = true;
+  item.resultMimeType = "";
   item.errorInfo = null;
   item.card?.classList.remove("has-result");
   if (item.image) item.image.removeAttribute("src");
@@ -6368,7 +6389,6 @@ function openVideoPreview(item) {
   els.videoPreviewTitle.textContent = item.outputName || "视频预览";
   setVideoPreviewStatus("正在准备背景预览...");
   clearVideoPreviewExport();
-  if (els.videoPreviewExportBackgroundButton) els.videoPreviewExportBackgroundButton.textContent = "导出背景视频";
   if (els.videoBackgroundTypeSelect) {
     els.videoBackgroundTypeSelect.value = "transparent";
     refreshCustomSelect(els.videoBackgroundTypeSelect);
@@ -6393,47 +6413,64 @@ function updateVideoPreviewBackground() {
   renderVideoPreviewFrame();
   if (videoPreviewItem) {
     setVideoPreviewStatus(type === "transparent"
-      ? "透明背景预览中，可导出透明 WebM；若浏览器不支持透明编码，请改用颜色背景。"
-      : "颜色背景预览已更新，导出后将生成带背景的新视频。");
+      ? "透明背景预览中。下载需要真实透明 MOV；如果当前结果不是透明 MOV，会提示接入转码服务。"
+      : "颜色背景预览已更新。下载将生成真实 MP4，不会使用 WebM 冒充。");
   }
 }
 
-async function exportVideoPreviewWithBackground(item) {
-  const button = els.videoPreviewExportBackgroundButton;
+async function downloadVideoPreviewOutput(item) {
+  const button = els.videoPreviewDownloadButton;
   if (!item?.blob || !button) return;
   const settings = getVideoBackgroundSettings();
   const settingsKey = getVideoBackgroundSettingsKey(settings);
-  if (videoPreviewState.exportedBlob && videoPreviewState.exportedSettingsKey === settingsKey) {
-    downloadBlob(videoPreviewState.exportedBlob, videoPreviewState.exportedName || makeBackgroundVideoOutputName(item.outputName || item.file?.name || "video"));
-    setVideoPreviewStatus("导出完成，下载的是新合成视频。");
+  if (settings.type === "color" && videoPreviewState.exportedBlob && videoPreviewState.exportedSettingsKey === settingsKey) {
+    downloadBlob(videoPreviewState.exportedBlob, videoPreviewState.exportedName || makeColorBackgroundMp4OutputName(item.outputName || item.file?.name || "video"));
+    setVideoPreviewStatus("MP4 已生成，下载的是新合成视频。");
     return;
   }
   const originalText = button.textContent;
-  const backgroundType = settings.type;
   button.disabled = true;
   videoPreviewState.exportBusy = true;
-  button.textContent = "正在导出...";
-  setVideoPreviewStatus("正在重新合成并导出背景视频...");
+  button.textContent = "处理中...";
   try {
-    const { blob, mimeType } = await renderVideoWithBackground(item, settings);
-    const outputName = makeBackgroundVideoOutputName(item.outputName || item.file?.name || "video", mimeType);
+    if (settings.type === "transparent") {
+      await downloadTransparentMovOutput(item);
+      return;
+    }
+    setVideoPreviewStatus("正在重新合成并导出 MP4...");
+    const { blob, mimeType } = await renderVideoWithNativeMp4(item, settings);
+    if (!/mp4/i.test(mimeType || blob.type || "")) {
+      throw new Error("当前浏览器无法直接导出 MP4，请接入转码服务后使用。");
+    }
+    const outputName = makeColorBackgroundMp4OutputName(item.outputName || item.file?.name || "video");
     setVideoPreviewExport(blob, outputName, settingsKey);
     downloadBlob(blob, outputName);
-    const alphaHint = backgroundType === "transparent" ? " · 当前浏览器可能不支持透明视频编码，如导出后背景变黑，请改用颜色背景导出。" : "";
-    setVideoPreviewStatus(`导出完成，下载的是新合成视频。${alphaHint}`);
+    setVideoPreviewStatus("MP4 已生成，下载的是新合成视频。");
   } catch (error) {
     console.error(error);
     const message = error?.message || String(error);
-    setVideoPreviewStatus(`背景视频导出失败：${message}`);
+    setVideoPreviewStatus(`下载失败：${message}`);
   } finally {
     button.disabled = false;
     videoPreviewState.exportBusy = false;
-    button.textContent = videoPreviewState.exportedBlob ? "下载新视频" : originalText;
+    button.textContent = originalText || "下载";
   }
 }
 
-async function renderVideoWithBackground(item, backgroundSettings) {
+async function downloadTransparentMovOutput(item) {
+  if (isTransparentMovVideoItem(item)) {
+    const outputName = makeTransparentMovOutputName(item.outputName || item.file?.name || "video");
+    downloadBlob(item.blob, outputName);
+    setVideoPreviewStatus("已下载 RunningHub 透明 MOV。");
+    return;
+  }
+  throw new Error("当前浏览器无法直接导出透明 MOV，请接入转码服务后使用。");
+}
+
+async function renderVideoWithNativeMp4(item, backgroundSettings) {
   if (typeof MediaRecorder === "undefined") throw new Error("当前浏览器不支持视频导出");
+  const mimeType = getNativeMp4RecorderMimeType();
+  if (!mimeType) throw new Error("当前浏览器无法直接导出 MP4，请接入转码服务后使用。");
   const sourceUrl = item.resultUrl || URL.createObjectURL(item.blob);
   const shouldRevoke = !item.resultUrl;
   const sourceVideo = document.createElement("video");
@@ -6455,18 +6492,15 @@ async function renderVideoWithBackground(item, backgroundSettings) {
     const stream = canvas.captureStream(fps);
     const sourceStream = getVideoAudioStream(sourceVideo);
     sourceStream?.getAudioTracks?.().forEach((track) => stream.addTrack(track));
-    const mimeType = getVideoRecorderMimeType();
     console.info("[video-background-export]", {
       backgroundType: backgroundSettings.type,
       selectedColor: backgroundSettings.color,
       videoWidth: width,
       videoHeight: height,
-      mimeType: mimeType || "video/webm",
+      mimeType,
+      targetFormat: "mp4",
     });
-    if (backgroundSettings.type === "transparent" && !/vp8|vp9/i.test(mimeType)) {
-      console.warn("当前浏览器可能不支持透明视频导出，建议使用颜色背景导出。");
-    }
-    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    const recorder = new MediaRecorder(stream, { mimeType });
     const chunks = [];
     const exportScratch = createVideoRenderScratch();
     let rafId = 0;
@@ -6490,6 +6524,7 @@ async function renderVideoWithBackground(item, backgroundSettings) {
         backgroundType: backgroundSettings.type,
         backgroundColor: backgroundSettings.color,
         chromaOptions: DEFAULT_VIDEO_CHROMA_KEY,
+        requiresLocalChromaKey: item.requiresLocalChromaKey !== false,
         scratch: exportScratch,
       });
       rafId = requestAnimationFrame(draw);
@@ -6503,6 +6538,7 @@ async function renderVideoWithBackground(item, backgroundSettings) {
       backgroundType: backgroundSettings.type,
       backgroundColor: backgroundSettings.color,
       chromaOptions: DEFAULT_VIDEO_CHROMA_KEY,
+      requiresLocalChromaKey: item.requiresLocalChromaKey !== false,
       scratch: exportScratch,
     });
     recorder.start(500);
@@ -6513,10 +6549,10 @@ async function renderVideoWithBackground(item, backgroundSettings) {
     cancelAnimationFrame(rafId);
     if (recorder.state !== "inactive") recorder.stop();
     await stopped;
-    const blob = new Blob(chunks, { type: recorder.mimeType || "video/webm" });
+    const blob = new Blob(chunks, { type: recorder.mimeType || mimeType });
     if (!blob.size) throw new Error("导出失败：没有生成视频数据。");
     if (blob.size < 1024) throw new Error("导出失败：生成的视频数据异常偏小。");
-    return { blob, mimeType: recorder.mimeType || "video/webm" };
+    return { blob, mimeType: recorder.mimeType || mimeType };
   } finally {
     sourceVideo.pause();
     sourceVideo.removeAttribute("src");
@@ -6571,6 +6607,7 @@ function renderVideoPreviewFrame() {
     backgroundType: settings.type,
     backgroundColor: settings.color,
     chromaOptions: DEFAULT_VIDEO_CHROMA_KEY,
+    requiresLocalChromaKey: videoPreviewItem?.requiresLocalChromaKey !== false,
     scratch: videoPreviewState,
   });
 }
@@ -6602,11 +6639,16 @@ function renderVideoFrameToCanvas({
   backgroundType = "transparent",
   backgroundColor = "#ffffff",
   chromaOptions = DEFAULT_VIDEO_CHROMA_KEY,
+  requiresLocalChromaKey = true,
   scratch = videoPreviewState,
 }) {
   const width = canvas.width || video.videoWidth || 1;
   const height = canvas.height || video.videoHeight || 1;
   drawVideoBackground(ctx, width, height, { type: backgroundType, color: backgroundColor });
+  if (!requiresLocalChromaKey) {
+    ctx.drawImage(video, 0, 0, width, height);
+    return;
+  }
   const sourceCanvas = getSizedCanvasFromScratch(scratch, "sourceCanvas", width, height);
   const foregroundCanvas = getSizedCanvasFromScratch(scratch, "foregroundCanvas", width, height);
   const sourceCtx = sourceCanvas.getContext("2d", { willReadFrequently: true });
@@ -6692,7 +6734,6 @@ function setVideoPreviewExport(blob, name, settingsKey) {
   videoPreviewState.exportedUrl = URL.createObjectURL(blob);
   videoPreviewState.exportedName = name;
   videoPreviewState.exportedSettingsKey = settingsKey;
-  if (els.videoPreviewExportBackgroundButton) els.videoPreviewExportBackgroundButton.textContent = "下载新视频";
 }
 
 function clearVideoPreviewExport() {
@@ -6701,17 +6742,12 @@ function clearVideoPreviewExport() {
   videoPreviewState.exportedUrl = "";
   videoPreviewState.exportedName = "";
   videoPreviewState.exportedSettingsKey = "";
-  if (els.videoPreviewExportBackgroundButton && !videoPreviewState.exportBusy) {
-    els.videoPreviewExportBackgroundButton.textContent = "导出背景视频";
-  }
 }
 
 function markVideoPreviewExportDirty() {
   if (!videoPreviewState.exportedBlob || videoPreviewState.exportBusy) return;
   const settingsKey = getVideoBackgroundSettingsKey(getVideoBackgroundSettings());
-  if (settingsKey !== videoPreviewState.exportedSettingsKey && els.videoPreviewExportBackgroundButton) {
-    els.videoPreviewExportBackgroundButton.textContent = "导出背景视频";
-  }
+  if (settingsKey !== videoPreviewState.exportedSettingsKey) clearVideoPreviewExport();
 }
 
 function updateVideoPreviewPlaybackUi() {
@@ -6789,19 +6825,33 @@ function waitForMediaEvent(media, eventName) {
   });
 }
 
-function getVideoRecorderMimeType() {
+function getNativeMp4RecorderMimeType() {
+  if (typeof MediaRecorder === "undefined") return "";
   const candidates = [
-    "video/webm;codecs=vp9",
-    "video/webm;codecs=vp8",
-    "video/webm",
+    "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+    "video/mp4;codecs=avc1.42E01E",
+    "video/mp4;codecs=h264",
+    "video/mp4",
   ];
   return candidates.find((type) => MediaRecorder.isTypeSupported?.(type)) || "";
 }
 
-function makeBackgroundVideoOutputName(name, mimeType = "video/webm") {
-  const extension = mimeType.includes("webm") ? "webm" : "mp4";
+function isTransparentMovVideoItem(item) {
+  const kind = String(item?.resultKind || "").toLowerCase();
+  const mime = String(item?.resultMimeType || item?.blob?.type || "").toLowerCase();
+  const name = String(item?.outputName || item?.file?.name || "").toLowerCase();
+  return item?.requiresLocalChromaKey === false
+    && (kind === "transparent-mov" || mime.includes("quicktime") || mime.includes("mov") || /\.mov$/i.test(name));
+}
+
+function makeTransparentMovOutputName(name) {
   const base = (name || "video").replace(/\.[^.]+$/, "");
-  return `${base}-background.${extension}`;
+  return `${base}-transparent.mov`;
+}
+
+function makeColorBackgroundMp4OutputName(name) {
+  const base = (name || "video").replace(/\.[^.]+$/, "");
+  return `${base}-background.mp4`;
 }
 
 async function downloadAllVideos() {

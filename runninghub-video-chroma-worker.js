@@ -147,6 +147,8 @@ async function checkVideoTask(taskId, apiKey, config) {
       resultUrl: selected.url,
       mimeType: selected.mimeType || "video/mp4",
       filename: selected.filename || `runninghub-video-chroma-${taskId}.mp4`,
+      resultKind: selected.resultKind || "green-screen",
+      requiresLocalChromaKey: selected.requiresLocalChromaKey !== false,
       message: "视频抠像已完成",
     });
   }
@@ -322,12 +324,49 @@ function selectVideoOutput(data) {
       filename: getFilename(value, parent),
       mimeType: getMimeType(value, parent),
       path: path.join("."),
+      contextText: `${value} ${parentText} ${pathText}`.toLowerCase(),
     });
   });
-  const selected = candidates.find((candidate) => /\.(mp4|webm|mov|m4v)(\?|$)/i.test(candidate.url)) || candidates[0] || null;
+  candidates.forEach(classifyVideoCandidate);
+  const selected = candidates.find((candidate) => candidate.resultKind === "transparent-mov")
+    || candidates.find((candidate) => candidate.resultKind === "alpha-webm")
+    || candidates.find((candidate) => candidate.resultKind === "green-screen")
+    || candidates[0]
+    || null;
   if (selected) selected.debug = { candidateCount: candidates.length };
-  console.log(`[${WORKER_NAME}] output_candidates`, candidates.map((item) => ({ url: item.url, path: item.path, filename: item.filename })).slice(0, 12));
+  console.log(`[${WORKER_NAME}] output_candidates`, candidates.map((item) => ({
+    url: item.url,
+    path: item.path,
+    filename: item.filename,
+    mimeType: item.mimeType,
+    resultKind: item.resultKind,
+    requiresLocalChromaKey: item.requiresLocalChromaKey,
+    reason: item.selectionReason,
+  })).slice(0, 12));
   return selected;
+}
+
+function classifyVideoCandidate(candidate) {
+  const text = `${candidate.contextText || ""} ${candidate.filename || ""} ${candidate.mimeType || ""}`.toLowerCase();
+  const isMov = /\.mov(\?|$)/i.test(candidate.url) || /\.mov$/i.test(candidate.filename || "") || /quicktime|video\/mov/.test(candidate.mimeType || "");
+  const isWebm = /\.webm(\?|$)/i.test(candidate.url) || /\.webm$/i.test(candidate.filename || "") || /webm/.test(candidate.mimeType || "");
+  const hasAlphaHint = /transparent|transparency|alpha|rgba|prores|4444|透明|带透明|去背景|抠像/.test(text);
+  if (isMov && hasAlphaHint) {
+    candidate.resultKind = "transparent-mov";
+    candidate.requiresLocalChromaKey = false;
+    candidate.selectionReason = "transparent_mov_alpha_hint";
+    return candidate;
+  }
+  if (isWebm && hasAlphaHint) {
+    candidate.resultKind = "alpha-webm";
+    candidate.requiresLocalChromaKey = false;
+    candidate.selectionReason = "alpha_webm_hint";
+    return candidate;
+  }
+  candidate.resultKind = "green-screen";
+  candidate.requiresLocalChromaKey = true;
+  candidate.selectionReason = "fallback_green_screen_video";
+  return candidate;
 }
 
 function walkOutput(value, path, parent, visit) {
