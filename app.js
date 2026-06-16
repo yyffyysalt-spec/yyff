@@ -407,6 +407,10 @@ els.fileInput.addEventListener("change", (event) => {
   els.fileInput.value = "";
 });
 els.uploadMoreButton.addEventListener("click", () => {
+  if (state.activeModule === "video") {
+    els.videoWorkspaceInput.click();
+    return;
+  }
   els.fileInput.click();
 });
 els.videoFileInput.addEventListener("change", (event) => {
@@ -1894,7 +1898,7 @@ function readVideoOptions() {
 }
 
 function getSelectedVideoMode() {
-  return document.querySelector('input[name="videoMode"]:checked')?.value || "video-upscale";
+  return document.querySelector('input[name="videoMode"]:checked')?.value || "video-chroma-upscale";
 }
 
 function openPreview(item, { mode = item.resultCanvas ? "result" : "compress" } = {}) {
@@ -5937,7 +5941,7 @@ function updateUi() {
   els.mainWorkspace.classList.toggle("has-items", total > 0);
   els.mainWorkspace.hidden = !activeImage;
   els.videoWorkspace.hidden = !activeVideo;
-  els.uploadMoreButton.hidden = !activeImage;
+  els.uploadMoreButton.hidden = !(activeImage || activeVideo);
   els.compressPanel.hidden = !activeImage;
   const missingPixianCredentials = total > 0 && needsPixianCredentials() && !hasPixianCredentials();
   const missingKoukoutuCredentials = total > 0 && needsKoukoutuCredentials() && !hasKoukoutuCredentials();
@@ -5950,7 +5954,11 @@ function updateUi() {
     removeBgProvider !== "koukoutu" || state.isProcessing || !hasKoukoutuCredentials();
   els.downloadButton.disabled = completed === 0 || state.isProcessing;
   els.clearButton.disabled = total === 0 || state.isProcessing;
-  els.uploadMoreButton.disabled = state.isProcessing;
+  els.uploadMoreButton.disabled = activeVideo ? videoState.isProcessing : state.isProcessing;
+  const uploadMoreLabel = els.uploadMoreButton.querySelector("span");
+  if (uploadMoreLabel) uploadMoreLabel.textContent = activeVideo ? "上传视频" : "上传图片";
+  els.uploadMoreButton.title = activeVideo ? "上传视频" : "上传图片";
+  els.uploadMoreButton.setAttribute("aria-label", activeVideo ? "上传视频" : "上传图片");
   els.videoProcessButton.disabled = videoState.items.length === 0 || videoState.isProcessing;
   els.videoDownloadButton.disabled = !videoState.items.some((item) => item.blob) || videoState.isProcessing;
   els.videoClearButton.disabled = videoState.items.length === 0 || videoState.isProcessing;

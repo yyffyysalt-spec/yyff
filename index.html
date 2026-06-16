@@ -230,33 +230,26 @@
           </section>
 
           <section class="module-panel video-module" id="videoControls" data-module-panel="video" aria-label="视频处理参数" hidden>
-            <label class="video-upload-card">
-              <input id="videoFileInput" type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" multiple />
-              <span class="drop-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24"><path d="M4 6h11a3 3 0 0 1 3 3v1l3-2v8l-3-2v1a3 3 0 0 1-3 3H4V6Z"/><path d="M8 10v4l4-2-4-2Z"/></svg>
-              </span>
-              <span class="drop-title">选择或拖入视频</span>
-              <span class="drop-copy">支持 MP4、MOV、WEBM。视频较大时 RunningHub 处理会更久。</span>
-            </label>
-            <p class="video-config-notice" id="videoConfigNotice">视频 RunningHub 工作流未配置，请先补充 workflowId 和节点参数。</p>
+            <input id="videoFileInput" type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" multiple hidden />
 
             <div class="control-group">
               <span class="control-label">视频处理模式</span>
               <div class="segmented" role="radiogroup" aria-label="视频处理模式">
                 <label>
-                  <input type="radio" name="videoMode" value="video-upscale" checked />
-                  <span>只放大视频</span>
+                  <input type="radio" name="videoMode" value="video-chroma-upscale" checked />
+                  <span>抠绿幕 + 放大</span>
                 </label>
                 <label>
                   <input type="radio" name="videoMode" value="video-chroma" />
                   <span>只抠绿幕</span>
                 </label>
                 <label>
-                  <input type="radio" name="videoMode" value="video-chroma-upscale" />
-                  <span>抠绿幕 + 放大</span>
+                  <input type="radio" name="videoMode" value="video-upscale" />
+                  <span>高清放大</span>
                 </label>
               </div>
             </div>
+            <p class="video-config-notice" id="videoConfigNotice">视频 RunningHub 工作流未配置，请先补充 workflowId 和节点参数。</p>
 
             <div class="control-grid">
               <label class="field" data-video-option="video-upscale-model">
