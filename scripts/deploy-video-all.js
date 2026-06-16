@@ -59,6 +59,10 @@ function sanitize(text, secret = "") {
   return String(text).split(secret).join("[已隐藏]");
 }
 
+function stripAnsi(text) {
+  return String(text).replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "");
+}
+
 function runCommand(command, args, options = {}) {
   const { input = "", secret = "", quiet = false } = options;
   return new Promise((resolve, reject) => {
@@ -205,50 +209,83 @@ function setSecret(target, apiKey) {
     });
 
     let output = "";
+    let plainOutput = "";
     let secretSent = false;
     let createAnswered = false;
+    let settled = false;
+    let secretAfterCreateTimer = null;
+    let watchdog = null;
+
+    const cleanup = () => {
+      if (secretAfterCreateTimer) clearTimeout(secretAfterCreateTimer);
+      if (watchdog) clearTimeout(watchdog);
+    };
+
+    const rejectOnce = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      try { child.kill(); } catch {}
+      reject(error);
+    };
+
+    const resolveOnce = (value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const resetWatchdog = () => {
+      if (watchdog) clearTimeout(watchdog);
+      watchdog = setTimeout(() => {
+        const error = new Error(`${target.name} Secret 写入超过 60 秒无输出，可能卡在 wrangler 交互步骤。请检查 Cloudflare 登录状态后重试。`);
+        error.output = output;
+        rejectOnce(error);
+      }, 60000);
+    };
+
+    const sendSecret = () => {
+      if (secretSent || child.killed) return;
+      child.stdin.write(`${apiKey}\n`);
+      secretSent = true;
+      resetWatchdog();
+    };
 
     const maybeRespond = (chunk) => {
       const text = chunk.toString();
       const safeText = sanitize(text, apiKey);
       output += safeText;
+      plainOutput += stripAnsi(text);
       process.stdout.write(safeText);
+      resetWatchdog();
 
-      if (!createAnswered && /(create.+worker|worker.+not.+exist|doesn.t seem to be a worker|create a new worker|would you like to create|do you want to create)/i.test(text)) {
-        child.stdin.write("y\n");
+      if (!createAnswered && /(there doesn.?t seem to be a worker called|do you want to create a new worker|create a new worker|would you like to create|do you want to create|worker.+not.+exist|create.+worker)/i.test(plainOutput)) {
+        child.stdin.write("Y\n");
         createAnswered = true;
+        resetWatchdog();
+        secretAfterCreateTimer = setTimeout(sendSecret, 900);
       }
 
-      if (!secretSent && /(enter.+secret|secret.+value|value:|secret:)/i.test(text)) {
-        child.stdin.write(`${apiKey}\n`);
-        secretSent = true;
+      if (!secretSent && /(enter.+secret|secret.+value|secret value|value:|secret:|paste.+secret|input.+secret)/i.test(plainOutput)) {
+        sendSecret();
       }
     };
 
-    const fallback = setTimeout(() => {
-      if (!secretSent) {
-        child.stdin.write(`${apiKey}\n`);
-        secretSent = true;
-      }
-    }, 2500);
-
     child.stdout.on("data", maybeRespond);
     child.stderr.on("data", maybeRespond);
-    child.on("error", (error) => {
-      clearTimeout(fallback);
-      reject(error);
-    });
+    child.on("error", rejectOnce);
     child.on("close", (code) => {
-      clearTimeout(fallback);
-      child.stdin.end();
+      try { child.stdin.end(); } catch {}
       if (code === 0) {
-        resolve({ output });
+        resolveOnce({ output });
       } else {
         const error = new Error(`${target.name} Secret 设置失败，退出码 ${code}`);
         error.output = output;
-        reject(error);
+        rejectOnce(error);
       }
     });
+    resetWatchdog();
   });
 }
 
