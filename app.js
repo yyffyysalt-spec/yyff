@@ -1096,6 +1096,8 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 function canvasToGifResult(canvas) {
   return {
     blob: canvasToGifBlob(canvas),
