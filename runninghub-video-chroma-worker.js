@@ -73,7 +73,7 @@ async function createVideoTask(payload, apiKey, config) {
     hasResourceId: Boolean(uploaded.resourceId),
   });
 
-  const nodeInfoList = await buildNodeInfoListFromAiAppDemo(apiKey, config, uploaded);
+  const nodeInfoList = await buildNodeInfoListFromAiAppDemo(apiKey, config, uploaded, payload);
   const createBody = {
     apiKey,
     webappId: String(config.appId),
@@ -182,7 +182,7 @@ async function uploadResource(file, apiKey, config) {
   return info;
 }
 
-async function buildNodeInfoListFromAiAppDemo(apiKey, config, uploaded) {
+async function buildNodeInfoListFromAiAppDemo(apiKey, config, uploaded, payload) {
   const demoUrl = `${config.apiDemoEndpoint}?apiKey=${encodeURIComponent(apiKey)}&webappId=${encodeURIComponent(config.appId)}`;
   const response = await fetch(demoUrl, { headers: { Authorization: `Bearer ${apiKey}` } });
   const data = await readRunningHubJson(response, "ai_app_demo", config);
@@ -201,8 +201,30 @@ async function buildNodeInfoListFromAiAppDemo(apiKey, config, uploaded) {
     .map((node) => ({
       nodeId: String(node.nodeId),
       fieldName: String(node.fieldName),
-      fieldValue: isSameNode(node, mediaNode) ? uploaded.filename : String(node.fieldValue ?? ""),
+      fieldValue: resolveChromaFieldValue(node, mediaNode, uploaded, payload),
     }));
+}
+
+function resolveChromaFieldValue(node, mediaNode, uploaded, payload) {
+  if (isSameNode(node, mediaNode)) return uploaded.filename;
+  const text = `${node.fieldName} ${node.fieldType} ${node.description} ${node.nodeName}`.toLowerCase();
+  if (/key.?color|green.?color|chroma.?color|绿幕颜色|抠像颜色/.test(text)) {
+    return String(payload.keyColor || "#00ff00");
+  }
+  if (/tolerance|threshold|容差|阈值/.test(text)) {
+    return String(payload.tolerance || "medium");
+  }
+  if (/feather|soft|blur|羽化|柔化|边缘/.test(text)) {
+    return String(payload.edgeFeather || "high");
+  }
+  if (/despill|spill|green.?spill|去绿|溢色/.test(text)) {
+    return payload.spillSuppression === "0" ? "false" : "true";
+  }
+  if (/alpha|transparent|transparency|透明|背景|background/.test(text)) {
+    if (/none|transparent|透明/.test(String(node.fieldValue || "").toLowerCase())) return String(node.fieldValue);
+    return payload.outputTransparent === "0" ? "false" : "true";
+  }
+  return String(node.fieldValue ?? "");
 }
 
 function extractUploadInfo(data) {
@@ -358,6 +380,8 @@ async function readPayload(request) {
     tolerance: form.get("tolerance") || "",
     edgeFeather: form.get("edgeFeather") || "",
     spillSuppression: form.get("spillSuppression") || "",
+    outputAlpha: form.get("outputAlpha") || "",
+    outputTransparent: form.get("outputTransparent") || "",
   };
 }
 

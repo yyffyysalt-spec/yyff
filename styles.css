@@ -2570,12 +2570,67 @@ select,
   background: rgba(255, 255, 255, 0.04);
 }
 
+.video-thumb::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: linear-gradient(180deg, rgba(5, 8, 7, 0.06), rgba(5, 8, 7, 0.58));
+  opacity: 0;
+  transition: opacity 160ms ease;
+  pointer-events: none;
+}
+
 .video-thumb-image {
   width: 100%;
   height: 100%;
   object-fit: cover;
   object-position: center center;
   display: block;
+}
+
+.video-thumb-preview-button {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 4;
+  min-height: 42px;
+  padding: 0 18px;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 999px;
+  background: rgba(6, 14, 13, 0.74);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 900;
+  opacity: 0;
+  transform: translate(-50%, -46%) scale(0.96);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.26);
+  pointer-events: none;
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease,
+    background 160ms ease;
+}
+
+.video-card.has-result .video-thumb:hover::after,
+.video-card.has-result .video-thumb:focus-within::after {
+  opacity: 1;
+}
+
+.video-card.has-result .video-thumb:hover .video-thumb-preview-button,
+.video-card.has-result .video-thumb:focus-within .video-thumb-preview-button {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+  pointer-events: auto;
+}
+
+.video-thumb-preview-button:hover:not(:disabled) {
+  background: rgba(0, 224, 184, 0.88);
+  color: #06100d;
+}
+
+.video-thumb-preview-button:disabled {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .task-type-badge {
@@ -2598,6 +2653,51 @@ select,
   height: auto;
   border-radius: 8px;
   background: #000;
+}
+
+.video-background-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 5px 6px 5px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.video-background-tools[hidden] {
+  display: none !important;
+}
+
+.video-background-title {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.video-background-color {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 3px 10px 3px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.video-background-color input {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  padding: 0;
 }
 
 .stage-header h2,

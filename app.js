@@ -87,17 +87,16 @@ const els = {
   videoClearButton: document.querySelector("#videoClearButton"),
   videoUpscaleSelect: document.querySelector("#videoUpscaleSelect"),
   videoChromaSelect: document.querySelector("#videoChromaSelect"),
-  videoKeyColorInput: document.querySelector("#videoKeyColorInput"),
-  videoKeyColorText: document.querySelector("#videoKeyColorText"),
-  videoChromaToleranceSelect: document.querySelector("#videoChromaToleranceSelect"),
-  videoChromaFeatherSelect: document.querySelector("#videoChromaFeatherSelect"),
-  videoSpillToggle: document.querySelector("#videoSpillToggle"),
   videoPreviewModal: document.querySelector("#videoPreviewModal"),
   videoPreviewPlayer: document.querySelector("#videoPreviewPlayer"),
   videoPreviewTitle: document.querySelector("#videoPreviewTitle"),
   videoPreviewMeta: document.querySelector("#videoPreviewMeta"),
   videoPreviewDownloadButton: document.querySelector("#videoPreviewDownloadButton"),
   videoPreviewCloseButton: document.querySelector("#videoPreviewCloseButton"),
+  videoBackgroundTools: document.querySelector("#videoBackgroundTools"),
+  videoBackgroundColorInput: document.querySelector("#videoBackgroundColorInput"),
+  videoBackgroundColorText: document.querySelector("#videoBackgroundColorText"),
+  videoPreviewExportBackgroundButton: document.querySelector("#videoPreviewExportBackgroundButton"),
   previewModal: document.querySelector("#previewModal"),
   previewImage: document.querySelector("#previewImage"),
   previewCompareView: document.querySelector("#previewCompareView"),
@@ -230,6 +229,14 @@ const VIDEO_CHROMA_WORKFLOWS = normalizeVideoWorkflows(APP_CONFIG.VIDEO_CHROMA_W
 });
 const VIDEO_POLL_INTERVAL_MS = getPositiveConfigNumber("VIDEO_POLL_INTERVAL_MS", 3000);
 const VIDEO_MAX_POLLS = getPositiveConfigNumber("VIDEO_MAX_POLL_COUNT", 120);
+const DEFAULT_VIDEO_CHROMA_OPTIONS = {
+  keyColor: "#00ff00",
+  tolerance: "medium",
+  feather: "high",
+  despill: true,
+  outputAlpha: true,
+  outputTransparent: true,
+};
 const UPSCALE_PROVIDERS = {
   "canvas-resize": {
     label: "普通放大",
@@ -358,11 +365,6 @@ els.upscaleProviderSelect.addEventListener("change", () => {
 });
 els.videoUpscaleSelect.addEventListener("change", () => updateSelectTitle(els.videoUpscaleSelect));
 els.videoChromaSelect.addEventListener("change", () => updateSelectTitle(els.videoChromaSelect));
-els.videoChromaToleranceSelect.addEventListener("change", () => updateSelectTitle(els.videoChromaToleranceSelect));
-els.videoChromaFeatherSelect.addEventListener("change", () => updateSelectTitle(els.videoChromaFeatherSelect));
-els.videoKeyColorInput.addEventListener("input", () => {
-  els.videoKeyColorText.textContent = els.videoKeyColorInput.value;
-});
 document.querySelectorAll('input[name="videoMode"]').forEach((input) => {
   input.addEventListener("change", () => {
     updateVideoOptionVisibility();
@@ -427,10 +429,19 @@ els.videoPreviewCloseButton.addEventListener("click", () => els.videoPreviewModa
 els.videoPreviewModal.addEventListener("close", () => {
   els.videoPreviewPlayer.pause();
   els.videoPreviewPlayer.removeAttribute("src");
+  els.videoPreviewPlayer.style.backgroundColor = "";
+  if (els.videoBackgroundTools) els.videoBackgroundTools.hidden = true;
   videoPreviewItem = null;
 });
 els.videoPreviewDownloadButton.addEventListener("click", () => {
   if (videoPreviewItem?.blob) downloadBlob(videoPreviewItem.blob, videoPreviewItem.outputName);
+});
+els.videoBackgroundColorInput?.addEventListener("input", () => {
+  updateVideoPreviewBackground();
+});
+els.videoPreviewExportBackgroundButton?.addEventListener("click", async () => {
+  if (!videoPreviewItem?.blob) return;
+  await exportVideoPreviewWithBackground(videoPreviewItem);
 });
 
 ["dragenter", "dragover"].forEach((name) => {
@@ -1747,6 +1758,7 @@ async function processVideoQueue() {
     item.runninghubTaskId = "";
     item.errorInfo = null;
     item.card.classList.remove("has-error");
+    item.card.classList.remove("has-result");
     item.previewButton.disabled = true;
     item.downloadButton.disabled = true;
     item.deleteButton.disabled = true;
@@ -1761,6 +1773,7 @@ async function processVideoQueue() {
       item.outputName = output.name || item.outputName;
       if (item.resultUrl) URL.revokeObjectURL(item.resultUrl);
       item.resultUrl = URL.createObjectURL(item.blob);
+      item.card.classList.add("has-result");
       item.previewButton.disabled = false;
       item.downloadButton.disabled = false;
       setVideoCardStatus(item, "视频处理完成", "is-done");
@@ -1800,6 +1813,8 @@ async function processVideoItem(item, options) {
         tolerance: options.chromaTolerance,
         edgeFeather: options.chromaFeather,
         spillSuppression: options.spillSuppression ? "1" : "0",
+        outputAlpha: options.outputAlpha ? "1" : "0",
+        outputTransparent: options.outputTransparent ? "1" : "0",
       },
     });
   }
@@ -1964,10 +1979,12 @@ function readVideoOptions() {
     mode: getSelectedVideoMode(),
     upscaleWorkflow: els.videoUpscaleSelect.value,
     chromaWorkflow: els.videoChromaSelect.value,
-    keyColor: els.videoKeyColorInput.value,
-    chromaTolerance: els.videoChromaToleranceSelect.value,
-    chromaFeather: els.videoChromaFeatherSelect.value,
-    spillSuppression: els.videoSpillToggle.checked,
+    keyColor: DEFAULT_VIDEO_CHROMA_OPTIONS.keyColor,
+    chromaTolerance: DEFAULT_VIDEO_CHROMA_OPTIONS.tolerance,
+    chromaFeather: DEFAULT_VIDEO_CHROMA_OPTIONS.feather,
+    spillSuppression: DEFAULT_VIDEO_CHROMA_OPTIONS.despill,
+    outputAlpha: DEFAULT_VIDEO_CHROMA_OPTIONS.outputAlpha,
+    outputTransparent: DEFAULT_VIDEO_CHROMA_OPTIONS.outputTransparent,
   };
 }
 
@@ -6013,7 +6030,7 @@ function updateVideoOptionVisibility() {
   document.querySelectorAll('[data-video-option="video-upscale-model"]').forEach((element) => {
     element.hidden = !needsUpscale;
   });
-  document.querySelectorAll('[data-video-option="video-chroma-model"], [data-video-option="chroma-params"]').forEach((element) => {
+  document.querySelectorAll('[data-video-option="video-chroma-model"]').forEach((element) => {
     element.hidden = !needsChroma;
   });
 }
@@ -6023,7 +6040,7 @@ function getVideoConfigWarning() {
   const needsUpscale = mode === "video-upscale" || mode === "video-chroma-upscale";
   const needsChroma = mode === "video-chroma" || mode === "video-chroma-upscale";
   if ((needsUpscale && !VIDEO_UPSCALE_PROXY_URL) || (needsChroma && !VIDEO_CHROMA_PROXY_URL)) {
-    return "视频 RunningHub 工作流未配置，请先补充 workflowId 和节点参数。";
+    return "视频 RunningHub Worker URL 未配置，请先运行 deploy:video-all。";
   }
   return "";
 }
@@ -6269,6 +6286,7 @@ function cleanupVideoItem(item) {
   item.file = null;
   item.blob = null;
   item.errorInfo = null;
+  item.card?.classList.remove("has-result");
   if (item.image) item.image.removeAttribute("src");
 }
 
@@ -6279,11 +6297,139 @@ function openVideoPreview(item) {
   els.videoPreviewTitle.textContent = item.outputName || "视频预览";
   els.videoPreviewMeta.textContent = `${formatBytes(item.blob.size)}${item.runninghubTaskId ? ` · taskId: ${item.runninghubTaskId}` : ""}`;
   els.videoPreviewPlayer.src = item.resultUrl;
+  if (els.videoBackgroundTools) els.videoBackgroundTools.hidden = false;
+  updateVideoPreviewBackground();
   if (typeof els.videoPreviewModal.showModal === "function") {
     els.videoPreviewModal.showModal();
   } else {
     els.videoPreviewModal.setAttribute("open", "");
   }
+}
+
+function updateVideoPreviewBackground() {
+  const color = els.videoBackgroundColorInput?.value || "#ffffff";
+  if (els.videoBackgroundColorText) els.videoBackgroundColorText.textContent = color;
+  if (els.videoPreviewPlayer) els.videoPreviewPlayer.style.backgroundColor = color;
+}
+
+async function exportVideoPreviewWithBackground(item) {
+  const button = els.videoPreviewExportBackgroundButton;
+  if (!item?.blob || !button) return;
+  const color = els.videoBackgroundColorInput?.value || "#ffffff";
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = "正在导出...";
+  try {
+    const { blob, mimeType } = await renderVideoWithSolidBackground(item, color);
+    const outputName = makeBackgroundVideoOutputName(item.outputName || item.file?.name || "video", mimeType);
+    downloadBlob(blob, outputName);
+    els.videoPreviewMeta.textContent = `${formatBytes(item.blob.size)} · 已导出背景视频 ${formatBytes(blob.size)}${item.runninghubTaskId ? ` · taskId: ${item.runninghubTaskId}` : ""}`;
+  } catch (error) {
+    console.error(error);
+    const message = error?.message || String(error);
+    els.videoPreviewMeta.textContent = `${formatBytes(item.blob.size)} · 背景视频导出失败：${message}`;
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+}
+
+async function renderVideoWithSolidBackground(item, color) {
+  if (typeof MediaRecorder === "undefined") throw new Error("当前浏览器不支持视频导出");
+  const sourceUrl = item.resultUrl || URL.createObjectURL(item.blob);
+  const shouldRevoke = !item.resultUrl;
+  const sourceVideo = document.createElement("video");
+  sourceVideo.muted = true;
+  sourceVideo.playsInline = true;
+  sourceVideo.preload = "auto";
+  sourceVideo.src = sourceUrl;
+
+  try {
+    await waitForMediaEvent(sourceVideo, "loadedmetadata");
+    const width = sourceVideo.videoWidth || item.metadata?.width || 1280;
+    const height = sourceVideo.videoHeight || item.metadata?.height || 720;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    if (typeof canvas.captureStream !== "function") throw new Error("当前浏览器不支持背景视频导出");
+    const ctx = canvas.getContext("2d", { alpha: false });
+    const fps = Math.min(30, Math.max(12, Math.round((item.metadata?.duration || 1) > 20 ? 24 : 30)));
+    const stream = canvas.captureStream(fps);
+    const mimeType = getVideoRecorderMimeType();
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    const chunks = [];
+    let rafId = 0;
+    let drawing = true;
+
+    recorder.addEventListener("dataavailable", (event) => {
+      if (event.data?.size) chunks.push(event.data);
+    });
+
+    const stopped = new Promise((resolve, reject) => {
+      recorder.addEventListener("stop", resolve, { once: true });
+      recorder.addEventListener("error", () => reject(recorder.error || new Error("视频导出失败")), { once: true });
+    });
+
+    const draw = () => {
+      if (!drawing) return;
+      ctx.fillStyle = color;
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(sourceVideo, 0, 0, width, height);
+      rafId = requestAnimationFrame(draw);
+    };
+
+    sourceVideo.currentTime = 0;
+    recorder.start(500);
+    draw();
+    await sourceVideo.play();
+    await waitForMediaEvent(sourceVideo, "ended");
+    drawing = false;
+    cancelAnimationFrame(rafId);
+    if (recorder.state !== "inactive") recorder.stop();
+    await stopped;
+    const blob = new Blob(chunks, { type: recorder.mimeType || "video/webm" });
+    if (!blob.size) throw new Error("背景视频导出为空");
+    return { blob, mimeType: recorder.mimeType || "video/webm" };
+  } finally {
+    sourceVideo.pause();
+    sourceVideo.removeAttribute("src");
+    sourceVideo.load();
+    if (shouldRevoke) URL.revokeObjectURL(sourceUrl);
+  }
+}
+
+function waitForMediaEvent(media, eventName) {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      media.removeEventListener(eventName, handleEvent);
+      media.removeEventListener("error", handleError);
+    };
+    const handleEvent = () => {
+      cleanup();
+      resolve();
+    };
+    const handleError = () => {
+      cleanup();
+      reject(new Error("视频读取失败"));
+    };
+    media.addEventListener(eventName, handleEvent, { once: true });
+    media.addEventListener("error", handleError, { once: true });
+  });
+}
+
+function getVideoRecorderMimeType() {
+  const candidates = [
+    "video/webm;codecs=vp9",
+    "video/webm;codecs=vp8",
+    "video/webm",
+  ];
+  return candidates.find((type) => MediaRecorder.isTypeSupported?.(type)) || "";
+}
+
+function makeBackgroundVideoOutputName(name, mimeType = "video/webm") {
+  const extension = mimeType.includes("webm") ? "webm" : "mp4";
+  const base = (name || "video").replace(/\.[^.]+$/, "");
+  return `${base}-background.${extension}`;
 }
 
 async function downloadAllVideos() {

@@ -267,36 +267,6 @@
               </label>
             </div>
 
-            <div class="video-chroma-options" data-video-option="chroma-params">
-              <label class="field color-field">
-                <span>绿幕颜色</span>
-                <span class="color-row">
-                  <input id="videoKeyColorInput" type="color" value="#00ff00" />
-                  <span id="videoKeyColorText">#00ff00</span>
-                </span>
-              </label>
-              <label class="field">
-                <span>容差</span>
-                <select id="videoChromaToleranceSelect">
-                  <option value="low">低</option>
-                  <option value="medium" selected>中等</option>
-                  <option value="high">高</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>边缘羽化</span>
-                <select id="videoChromaFeatherSelect">
-                  <option value="low" selected>低</option>
-                  <option value="medium">中等</option>
-                  <option value="high">高</option>
-                </select>
-              </label>
-              <label class="toggle">
-                <input id="videoSpillToggle" type="checkbox" checked />
-                <span>去绿边</span>
-              </label>
-            </div>
-
             <div class="actions">
               <button class="primary-button" id="videoProcessButton" type="button" disabled>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.6 5.2L19 10l-5.4 1.8L12 17l-1.6-5.2L5 10l5.4-1.8L12 3Z"/></svg>
@@ -494,6 +464,7 @@
           <img class="video-thumb-image" alt="视频首帧预览" />
           <span class="task-type-badge">视频</span>
           <div class="card-status">等待处理</div>
+          <button class="video-preview-button video-thumb-preview-button" type="button" disabled>放大预览</button>
         </div>
         <div class="card-footer">
           <div>
@@ -503,7 +474,6 @@
             <div class="file-error" hidden></div>
           </div>
           <div class="card-buttons">
-            <button class="small-button video-preview-button" type="button" disabled>查看</button>
             <button class="small-button video-download-button" type="button" disabled>下载</button>
             <button class="icon-button video-delete-button task-delete-button" type="button" title="删除" aria-label="删除">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
@@ -573,6 +543,14 @@
             <p id="videoPreviewMeta"></p>
           </div>
           <div class="preview-actions">
+            <div class="video-background-tools" id="videoBackgroundTools" hidden>
+              <span class="video-background-title">背景填充 / 背景替换</span>
+              <label class="video-background-color" title="选择导出背景色">
+                <input id="videoBackgroundColorInput" type="color" value="#ffffff" />
+                <span id="videoBackgroundColorText">#ffffff</span>
+              </label>
+              <button class="small-button" id="videoPreviewExportBackgroundButton" type="button">导出背景视频</button>
+            </div>
             <button class="small-button" id="videoPreviewDownloadButton" type="button">下载</button>
             <button class="icon-button" id="videoPreviewCloseButton" type="button" title="关闭" aria-label="关闭">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
