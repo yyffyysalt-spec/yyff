@@ -1856,6 +1856,9 @@ async function runVideoWorkerTask({ item, proxyUrl, file, fileName, label, outpu
       stage: createData?.stage || "create_task",
       detail: createData?.detail || "",
       taskId: createData?.taskId || "",
+      appId: createData?.appId || "",
+      endpoint: createData?.endpoint || "",
+      raw: createData?.raw || "",
       workerUrl: proxyUrl,
     });
   }
@@ -1892,6 +1895,9 @@ async function runVideoWorkerTask({ item, proxyUrl, file, fileName, label, outpu
         stage: data?.stage || "poll_task",
         detail: data?.detail || "",
         taskId: data?.taskId || taskId || "",
+        appId: data?.appId || createData?.appId || "",
+        endpoint: data?.endpoint || createData?.endpoint || "",
+        raw: data?.raw || "",
         workerUrl: proxyUrl,
       });
     }
@@ -5831,6 +5837,9 @@ function setVideoTaskError(item, error) {
     message: cleanErrorText(error?.displayMessage || error?.message || "视频处理失败"),
     detail: cleanErrorText(error?.detail || ""),
     taskId: cleanErrorText(error?.runninghubTaskId || item.runninghubTaskId || ""),
+    appId: cleanErrorText(error?.appId || ""),
+    endpoint: cleanErrorText(error?.endpoint || ""),
+    raw: cleanErrorText(formatErrorRaw(error?.raw || "")),
     workerUrl: cleanErrorText(error?.workerUrl || ""),
   };
   item.errorInfo = info;
@@ -5839,6 +5848,9 @@ function setVideoTaskError(item, error) {
     const lines = [`失败原因：${info.message}`];
     if (info.detail) lines.push(`详情：${info.detail}`);
     if (info.taskId) lines.push(`taskId: ${info.taskId}`);
+    if (info.appId) lines.push(`appId: ${info.appId}`);
+    if (info.endpoint) lines.push(`endpoint: ${info.endpoint}`);
+    if (info.raw) lines.push(`RunningHub：${info.raw}`);
     if (info.workerUrl) lines.push(`Worker：${info.workerUrl}`);
     item.errorEl.textContent = lines.join("\n");
     item.errorEl.title = JSON.stringify(info, null, 2);
@@ -5852,13 +5864,26 @@ function setVideoCardStatus(item, text, className = "") {
   item.status.title = text;
 }
 
-function createVideoError(message, { stage = "", detail = "", taskId = "", workerUrl = "" } = {}) {
+function createVideoError(message, { stage = "", detail = "", taskId = "", appId = "", endpoint = "", raw = "", workerUrl = "" } = {}) {
   const error = new Error(message);
   error.stage = stage;
   error.detail = detail;
   error.runninghubTaskId = taskId;
+  error.appId = appId;
+  error.endpoint = endpoint;
+  error.raw = raw;
   error.workerUrl = workerUrl;
   return error;
+}
+
+function formatErrorRaw(raw) {
+  if (!raw) return "";
+  if (typeof raw === "string") return raw.slice(0, 800);
+  try {
+    return JSON.stringify(raw).slice(0, 800);
+  } catch {
+    return String(raw).slice(0, 800);
+  }
 }
 
 function buildTaskErrorInfo(item, options, error) {

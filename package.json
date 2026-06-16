@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check app.js && node --check runninghub-upscale-worker.js && node --check runninghub-removebg-worker.js && node --check runninghub-ai-removebg-worker.js && node --check runninghub-video-upscale-worker.js && node --check runninghub-video-chroma-worker.js && node --check scripts/setup-removebg.js && node --check scripts/set-removebg-url.js && node --check scripts/setup-ai-removebg.js && node --check scripts/set-ai-removebg-url.js && node --check scripts/deploy-ai-removebg-all.js && node --check scripts/verify-video-workers.js",
+    "check": "node --check app.js && node --check runninghub-upscale-worker.js && node --check runninghub-removebg-worker.js && node --check runninghub-ai-removebg-worker.js && node --check runninghub-video-upscale-worker.js && node --check runninghub-video-chroma-worker.js && node --check scripts/setup-removebg.js && node --check scripts/set-removebg-url.js && node --check scripts/setup-ai-removebg.js && node --check scripts/set-ai-removebg-url.js && node --check scripts/deploy-ai-removebg-all.js && node --check scripts/deploy-video-all.js && node --check scripts/verify-video-workers.js",
     "check:removebg": "node --check runninghub-removebg-worker.js && node scripts/setup-removebg.js",
     "check:ai-removebg": "node --check runninghub-ai-removebg-worker.js && node scripts/setup-ai-removebg.js",
     "secret:removebg": "wrangler secret put RUNNINGHUB_API_KEY --config wrangler.removebg.toml",
@@ -17,6 +17,7 @@
     "tail:video-upscale-worker": "wrangler tail runninghub-video-upscale-worker --config wrangler.video-upscale.toml",
     "tail:video-chroma-worker": "wrangler tail runninghub-video-chroma-worker --config wrangler.video-chroma.toml",
     "verify:video-workers": "node scripts/verify-video-workers.js",
+    "deploy:video-all": "node scripts/deploy-video-all.js",
     "deploy:web": "echo \"GitHub Pages uses repository publishing source\"",
     "deploy:all": "npm run check && npm run deploy:worker && npm run deploy:removebg-worker && npm run deploy:web",
     "set:removebg-url": "node scripts/set-removebg-url.js",
