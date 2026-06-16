@@ -548,27 +548,13 @@
               <label class="video-background-field" title="选择背景类型">
                 <span>类型</span>
                 <select id="videoBackgroundTypeSelect">
-                  <option value="color">纯色</option>
-                  <option value="transparent">透明</option>
-                  <option value="gradient">渐变</option>
-                  <option value="image">图片</option>
+                  <option value="transparent" selected>透明背景</option>
+                  <option value="color">颜色背景</option>
                 </select>
               </label>
-              <label class="video-background-color" title="选择导出背景色">
+              <label class="video-background-color" id="videoBackgroundColorField" title="选择导出背景色" hidden>
                 <input id="videoBackgroundColorInput" type="color" value="#ffffff" />
                 <span id="videoBackgroundColorText">#ffffff</span>
-              </label>
-              <label class="video-background-field video-background-image-field" id="videoBackgroundImageField" title="选择背景图片" hidden>
-                <input id="videoBackgroundImageInput" type="file" accept="image/*" />
-                <span>背景图</span>
-              </label>
-              <label class="video-background-field" id="videoBackgroundFitField" title="选择图片填充方式" hidden>
-                <span>适配</span>
-                <select id="videoBackgroundFitSelect">
-                  <option value="cover">铺满</option>
-                  <option value="contain">完整</option>
-                  <option value="stretch">拉伸</option>
-                </select>
               </label>
               <button class="small-button" id="videoPreviewExportBackgroundButton" type="button">导出背景视频</button>
             </div>
