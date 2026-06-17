@@ -2694,13 +2694,6 @@ select,
   display: none !important;
 }
 
-.video-background-title {
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 800;
-  white-space: nowrap;
-}
-
 .video-background-color {
   display: inline-flex;
   align-items: center;
@@ -2717,63 +2710,6 @@ select,
 
 .video-background-color[hidden] {
   display: none !important;
-}
-
-.video-background-field {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 32px;
-  min-width: 174px;
-  padding: 3px 9px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--text-main);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.video-background-field[hidden] {
-  display: none !important;
-}
-
-.video-background-field span {
-  white-space: nowrap;
-}
-
-.video-background-field select {
-  min-width: 112px;
-  max-width: none;
-  border: 0;
-  background: transparent;
-  color: var(--text-main);
-  font: inherit;
-  outline: none;
-}
-
-.video-background-field .custom-select {
-  min-width: 112px;
-  width: 112px;
-}
-
-.video-background-field .custom-select-button {
-  min-height: 28px;
-  padding: 0 4px;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.video-background-field .custom-select-label,
-.video-background-field .custom-select-option-label {
-  overflow: visible;
-  text-overflow: clip;
-  white-space: nowrap;
-}
-
-.video-background-field .custom-select-menu {
-  min-width: 132px;
 }
 
 .video-background-color input {
