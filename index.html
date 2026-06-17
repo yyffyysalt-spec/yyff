@@ -266,17 +266,6 @@
                 </select>
               </label>
             </div>
-            <div class="video-color-background-panel" data-video-option="video-color-background">
-              <label class="toggle video-color-background-toggle">
-                <input id="videoColorBackgroundToggle" type="checkbox" />
-                <span>颜色背景</span>
-              </label>
-              <label class="video-color-background-picker" id="videoColorBackgroundField" hidden>
-                <input id="videoColorBackgroundInput" type="color" value="#ffffff" />
-                <span id="videoColorBackgroundText">#ffffff</span>
-              </label>
-            </div>
-
             <div class="actions">
               <button class="primary-button" id="videoProcessButton" type="button" disabled>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.6 5.2L19 10l-5.4 1.8L12 17l-1.6-5.2L5 10l5.4-1.8L12 3Z"/></svg>
@@ -574,7 +563,6 @@
           <video id="videoPreviewPlayer" class="video-preview-source" playsinline muted></video>
         </div>
         <div class="video-preview-controls">
-          <button class="small-button" id="videoPreviewPlayButton" type="button">播放</button>
           <input id="videoPreviewTimeline" type="range" min="0" max="1000" value="0" aria-label="视频预览进度" />
           <span id="videoPreviewTime">0:00 / 0:00</span>
         </div>

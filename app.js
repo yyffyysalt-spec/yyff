@@ -87,14 +87,9 @@ const els = {
   videoClearButton: document.querySelector("#videoClearButton"),
   videoUpscaleSelect: document.querySelector("#videoUpscaleSelect"),
   videoChromaSelect: document.querySelector("#videoChromaSelect"),
-  videoColorBackgroundToggle: document.querySelector("#videoColorBackgroundToggle"),
-  videoColorBackgroundField: document.querySelector("#videoColorBackgroundField"),
-  videoColorBackgroundInput: document.querySelector("#videoColorBackgroundInput"),
-  videoColorBackgroundText: document.querySelector("#videoColorBackgroundText"),
   videoPreviewModal: document.querySelector("#videoPreviewModal"),
   videoPreviewPlayer: document.querySelector("#videoPreviewPlayer"),
   videoPreviewCanvas: document.querySelector("#videoPreviewCanvas"),
-  videoPreviewPlayButton: document.querySelector("#videoPreviewPlayButton"),
   videoPreviewTimeline: document.querySelector("#videoPreviewTimeline"),
   videoPreviewTime: document.querySelector("#videoPreviewTime"),
   videoPreviewTitle: document.querySelector("#videoPreviewTitle"),
@@ -301,6 +296,7 @@ const videoPreviewState = {
   useColorBackground: false,
   backgroundColor: "#ffffff",
   sourceUrl: "",
+  spacePlaybackActive: false,
 };
 let previewMode = "result";
 let previewViewMode = "result";
@@ -424,7 +420,6 @@ loadPixianCredentials();
 loadKoukoutuCredentials();
 updateOptionVisibility();
 updateVideoOptionVisibility();
-updateVideoColorBackgroundControls();
 updateApiControls();
 setCompressionPanelExpanded(false);
 updateCompressionQualityControls();
@@ -454,16 +449,14 @@ els.videoWorkspaceInput.addEventListener("change", (event) => {
 els.videoProcessButton.addEventListener("click", processVideoQueue);
 els.videoDownloadButton.addEventListener("click", downloadAllVideos);
 els.videoClearButton.addEventListener("click", clearVideoQueue);
-els.videoColorBackgroundToggle?.addEventListener("change", updateVideoColorBackgroundControls);
-els.videoColorBackgroundInput?.addEventListener("input", updateVideoColorBackgroundControls);
 els.videoPreviewCloseButton.addEventListener("click", () => els.videoPreviewModal.close());
 els.videoPreviewModal.addEventListener("close", () => {
   stopVideoPreviewRenderLoop();
+  removeVideoPreviewKeyboardListeners();
   els.videoPreviewPlayer.pause();
   els.videoPreviewPlayer.removeAttribute("src");
   delete els.videoPreviewPlayer.dataset.sourceUrl;
   els.videoPreviewPlayer.load();
-  if (els.videoPreviewPlayButton) els.videoPreviewPlayButton.textContent = "播放";
   if (els.videoPreviewTimeline) els.videoPreviewTimeline.value = "0";
   if (els.videoPreviewTime) els.videoPreviewTime.textContent = "0:00 / 0:00";
   if (els.videoBackgroundTools) els.videoBackgroundTools.hidden = true;
@@ -478,25 +471,12 @@ els.videoPreviewDownloadButton.addEventListener("click", async () => {
 els.videoPreviewColorBackgroundToggle?.addEventListener("change", () => {
   updateVideoPreviewBackground({ sourceChanged: true });
 });
-els.videoPreviewPlayButton?.addEventListener("click", async () => {
-  const video = els.videoPreviewPlayer;
-  if (!video?.src) return;
-  if (video.paused) {
-    await video.play();
-    startVideoPreviewRenderLoop();
-  } else {
-    video.pause();
-    renderVideoPreviewFrame();
-  }
-  updateVideoPreviewPlaybackUi();
-});
 els.videoPreviewTimeline?.addEventListener("input", () => {
   const video = els.videoPreviewPlayer;
   const duration = Number.isFinite(video?.duration) ? video.duration : 0;
   if (!video || !duration) return;
-  video.currentTime = (Number(els.videoPreviewTimeline.value) / 1000) * duration;
-  renderVideoPreviewFrame();
-  updateVideoPreviewPlaybackUi();
+  const targetTime = (Number(els.videoPreviewTimeline.value) / 1000) * duration;
+  void renderVideoPreviewInitialFrame({ currentTime: targetTime });
 });
 els.videoPreviewPlayer?.addEventListener("loadedmetadata", () => {
   setupVideoPreviewCanvasSize();
@@ -504,7 +484,7 @@ els.videoPreviewPlayer?.addEventListener("loadedmetadata", () => {
   setVideoPreviewStatus(settings.useColorBackground
     ? "颜色背景预览中，下载将生成当前颜色的新 MP4。"
     : "正在预览原始结果视频。");
-  renderVideoPreviewFrame();
+  void renderVideoPreviewInitialFrame();
   updateVideoPreviewPlaybackUi();
 });
 els.videoPreviewPlayer?.addEventListener("play", () => {
@@ -1649,6 +1629,8 @@ async function createVideoItem(file) {
     errorInfo: null,
     blob: null,
     resultUrl: "",
+    sourceVideoBlob: null,
+    sourceVideoUrl: "",
     sourceGreenVideoBlob: null,
     sourceGreenVideoUrl: "",
     sourceGreenOutputName: "",
@@ -1865,6 +1847,8 @@ async function processVideoQueue() {
       await applyVideoProcessingOutput(item, output, options);
       item.resultUrl = URL.createObjectURL(item.blob);
       item.finalVideoUrl = item.resultUrl;
+      item.sourceVideoUrl = item.resultUrl;
+      if (modeUsesVideoChroma(options.mode)) item.sourceGreenVideoUrl = item.resultUrl;
       item.card.classList.add("has-result");
       item.previewButton.disabled = false;
       item.downloadButton.disabled = false;
@@ -1889,10 +1873,15 @@ async function processVideoQueue() {
 
 function resetVideoResultState(item) {
   if (item.resultUrl) URL.revokeObjectURL(item.resultUrl);
+  if (item.sourceVideoUrl && item.sourceVideoUrl !== item.resultUrl && item.sourceVideoUrl !== item.sourceGreenVideoUrl) {
+    URL.revokeObjectURL(item.sourceVideoUrl);
+  }
   if (item.sourceGreenVideoUrl && item.sourceGreenVideoUrl !== item.resultUrl) {
     URL.revokeObjectURL(item.sourceGreenVideoUrl);
   }
   item.resultUrl = "";
+  item.sourceVideoUrl = "";
+  item.sourceVideoBlob = null;
   item.sourceGreenVideoUrl = "";
   item.sourceGreenVideoBlob = null;
   item.sourceGreenOutputName = "";
@@ -1915,48 +1904,16 @@ async function applyVideoProcessingOutput(item, output, options) {
   item.resultKind = output.resultKind || "";
   item.requiresLocalChromaKey = usesChroma ? output.requiresLocalChromaKey !== false : false;
   item.resultMimeType = rawMimeType;
-
-  if (usesChroma) {
-    item.sourceGreenVideoBlob = rawBlob;
-    item.sourceGreenOutputName = rawName;
-    item.sourceGreenVideoUrl = URL.createObjectURL(rawBlob);
-  }
-
-  if (usesChroma && options.useColorBackground) {
-    item.useColorBackground = true;
-    item.backgroundColor = normalizeHexColor(options.backgroundColor || "#ffffff");
-    setVideoCardStatus(item, `正在合成颜色背景 ${item.backgroundColor}...`, "is-working");
-    let composed;
-    try {
-      composed = await renderVideoWithNativeMp4(
-        {
-          ...item,
-          blob: rawBlob,
-          resultUrl: item.sourceGreenVideoUrl,
-          requiresLocalChromaKey: true,
-        },
-        { useColorBackground: true, color: item.backgroundColor },
-      );
-    } catch (error) {
-      console.error(error);
-      throw createVideoError("视频导出失败，请稍后重试。", {
-        stage: "compose_color_background",
-        detail: error?.message || String(error),
-        taskId: item.runninghubTaskId,
-      });
-    }
-    item.blob = composed.blob;
-    item.outputName = makeColorBackgroundMp4OutputName(item.file.name);
-    item.resultKind = "color-background-mp4";
-    item.requiresLocalChromaKey = false;
-    item.resultMimeType = composed.mimeType || item.blob.type || "video/mp4";
-    return;
-  }
-
   item.blob = rawBlob;
   item.outputName = rawName;
   item.useColorBackground = false;
   item.backgroundColor = "#ffffff";
+  item.sourceVideoBlob = rawBlob;
+  item.sourceVideoUrl = "";
+  if (usesChroma) {
+    item.sourceGreenVideoBlob = rawBlob;
+    item.sourceGreenOutputName = rawName;
+  }
 }
 
 function getVideoTaskMetaText(item, mode) {
@@ -2171,8 +2128,6 @@ function readVideoOptions() {
     mode: getSelectedVideoMode(),
     upscaleWorkflow: els.videoUpscaleSelect.value,
     chromaWorkflow: els.videoChromaSelect.value,
-    useColorBackground: Boolean(els.videoColorBackgroundToggle?.checked),
-    backgroundColor: normalizeHexColor(els.videoColorBackgroundInput?.value || "#ffffff"),
     keyColor: DEFAULT_VIDEO_CHROMA_OPTIONS.keyColor,
     chromaTolerance: DEFAULT_VIDEO_CHROMA_OPTIONS.tolerance,
     chromaFeather: DEFAULT_VIDEO_CHROMA_OPTIONS.feather,
@@ -6227,22 +6182,6 @@ function updateVideoOptionVisibility() {
   document.querySelectorAll('[data-video-option="video-chroma-model"]').forEach((element) => {
     element.hidden = !needsChroma;
   });
-  document.querySelectorAll('[data-video-option="video-color-background"]').forEach((element) => {
-    element.hidden = !needsChroma;
-  });
-  updateVideoColorBackgroundControls();
-}
-
-function updateVideoColorBackgroundControls() {
-  const mode = getSelectedVideoMode();
-  const needsChroma = mode === "video-chroma" || mode === "video-chroma-upscale";
-  const checked = needsChroma && Boolean(els.videoColorBackgroundToggle?.checked);
-  if (els.videoColorBackgroundField) els.videoColorBackgroundField.hidden = !checked;
-  const color = normalizeHexColor(els.videoColorBackgroundInput?.value || "#ffffff");
-  if (els.videoColorBackgroundInput && els.videoColorBackgroundInput.value !== color) {
-    els.videoColorBackgroundInput.value = color;
-  }
-  if (els.videoColorBackgroundText) els.videoColorBackgroundText.textContent = color;
 }
 
 function getVideoConfigWarning() {
@@ -6491,11 +6430,16 @@ function cleanupVideoItem(item) {
   if (!item) return;
   if (item.url) URL.revokeObjectURL(item.url);
   if (item.resultUrl) URL.revokeObjectURL(item.resultUrl);
+  if (item.sourceVideoUrl && item.sourceVideoUrl !== item.resultUrl && item.sourceVideoUrl !== item.sourceGreenVideoUrl) {
+    URL.revokeObjectURL(item.sourceVideoUrl);
+  }
   if (item.sourceGreenVideoUrl && item.sourceGreenVideoUrl !== item.resultUrl) {
     URL.revokeObjectURL(item.sourceGreenVideoUrl);
   }
   item.url = "";
   item.resultUrl = "";
+  item.sourceVideoUrl = "";
+  item.sourceVideoBlob = null;
   item.sourceGreenVideoUrl = "";
   item.sourceGreenVideoBlob = null;
   item.sourceGreenOutputName = "";
@@ -6534,6 +6478,7 @@ function openVideoPreview(item) {
   } else {
     els.videoPreviewModal.setAttribute("open", "");
   }
+  addVideoPreviewKeyboardListeners();
 }
 
 function updateVideoPreviewBackground({ sourceChanged = false, skipRender = false } = {}) {
@@ -6561,6 +6506,57 @@ function canUseVideoColorBackground(item) {
   return Boolean(item.sourceGreenVideoBlob || item.sourceGreenVideoUrl || modeUsesVideoChroma(item.processMode));
 }
 
+function addVideoPreviewKeyboardListeners() {
+  removeVideoPreviewKeyboardListeners();
+  document.addEventListener("keydown", handleVideoPreviewKeydown);
+  document.addEventListener("keyup", handleVideoPreviewKeyup);
+}
+
+function removeVideoPreviewKeyboardListeners() {
+  document.removeEventListener("keydown", handleVideoPreviewKeydown);
+  document.removeEventListener("keyup", handleVideoPreviewKeyup);
+  videoPreviewState.spacePlaybackActive = false;
+}
+
+async function handleVideoPreviewKeydown(event) {
+  if (event.code !== "Space" || !els.videoPreviewModal?.open || isVideoPreviewInteractiveTarget(event.target)) return;
+  event.preventDefault();
+  if (event.repeat || videoPreviewState.spacePlaybackActive) return;
+  const video = els.videoPreviewPlayer;
+  if (!video?.src) return;
+  videoPreviewState.spacePlaybackActive = true;
+  try {
+    await video.play();
+    startVideoPreviewRenderLoop();
+  } catch (error) {
+    console.warn(error);
+  }
+}
+
+function handleVideoPreviewKeyup(event) {
+  if (event.code !== "Space" || !els.videoPreviewModal?.open || isVideoPreviewInteractiveTarget(event.target)) return;
+  event.preventDefault();
+  const video = els.videoPreviewPlayer;
+  videoPreviewState.spacePlaybackActive = false;
+  if (!video?.src) return;
+  video.pause();
+  renderVideoPreviewFrame();
+  updateVideoPreviewPlaybackUi();
+}
+
+function isVideoPreviewInteractiveTarget(target) {
+  if (!(target instanceof Element)) return false;
+  const tagName = target.tagName.toLowerCase();
+  return (
+    target.isContentEditable ||
+    tagName === "input" ||
+    tagName === "textarea" ||
+    tagName === "select" ||
+    tagName === "button" ||
+    target.closest("[contenteditable='true']")
+  );
+}
+
 function syncVideoPreviewSource() {
   if (!videoPreviewItem || !els.videoPreviewPlayer) return;
   const settings = getVideoBackgroundSettings();
@@ -6573,44 +6569,32 @@ function syncVideoPreviewSource() {
   const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
   stopVideoPreviewRenderLoop();
   video.pause();
+  videoPreviewState.spacePlaybackActive = false;
   video.dataset.sourceUrl = sourceUrl;
-  video.addEventListener("loadedmetadata", async () => {
-    video.currentTime = Math.min(currentTime, Number.isFinite(video.duration) ? video.duration : currentTime);
-    if (wasPlaying) {
-      try {
-        await video.play();
-        startVideoPreviewRenderLoop();
-      } catch (error) {
-        console.warn(error);
-      }
-    }
-  }, { once: true });
   video.src = sourceUrl;
   video.load();
+  void renderVideoPreviewInitialFrame({ currentTime: currentTime || 0.01, autoPlay: wasPlaying });
 }
 
 function getVideoPreviewGreenSource(item) {
   return {
     ...item,
-    blob: item.sourceGreenVideoBlob || item.blob,
-    resultUrl: item.sourceGreenVideoUrl || item.resultUrl,
+    blob: item.sourceGreenVideoBlob || item.sourceVideoBlob || item.blob,
+    resultUrl: item.sourceGreenVideoUrl || item.sourceVideoUrl || item.resultUrl,
     outputName: item.sourceGreenOutputName || item.outputName,
     requiresLocalChromaKey: true,
   };
 }
 
 function getVideoPreviewOriginalBlob(item) {
-  if (item.useColorBackground && item.sourceGreenVideoBlob) return item.sourceGreenVideoBlob;
-  return item.blob;
+  return item.sourceVideoBlob || item.blob;
 }
 
 function getVideoPreviewOriginalUrl(item) {
-  if (item.useColorBackground && item.sourceGreenVideoUrl) return item.sourceGreenVideoUrl;
-  return item.resultUrl;
+  return item.sourceVideoUrl || item.resultUrl;
 }
 
 function getVideoPreviewOriginalName(item) {
-  if (item.useColorBackground && item.sourceGreenOutputName) return item.sourceGreenOutputName;
   return item.outputName || item.file?.name || "video";
 }
 
@@ -6762,6 +6746,53 @@ function clearVideoPreviewCanvas() {
   const ctx = canvas?.getContext("2d");
   if (!canvas || !ctx) return;
   ctx.clearRect(0, 0, canvas.width || 1, canvas.height || 1);
+}
+
+async function renderVideoPreviewInitialFrame({ currentTime = 0.01, autoPlay = false } = {}) {
+  const video = els.videoPreviewPlayer;
+  if (!video?.src) return;
+  try {
+    await waitForVideoPreviewReady(video);
+    setupVideoPreviewCanvasSize();
+    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    const targetTime = duration > 0
+      ? Math.min(Math.max(currentTime || 0.01, 0), Math.max(0, duration - 0.02))
+      : 0;
+    if (Math.abs((Number.isFinite(video.currentTime) ? video.currentTime : 0) - targetTime) > 0.002) {
+      video.currentTime = targetTime;
+      await waitForMediaEvent(video, "seeked").catch(() => {});
+    }
+    renderVideoPreviewFrame();
+    updateVideoPreviewPlaybackUi();
+    if (autoPlay && els.videoPreviewModal.open) {
+      await video.play();
+      startVideoPreviewRenderLoop();
+    }
+  } catch (error) {
+    console.warn(error);
+  }
+}
+
+function waitForVideoPreviewReady(video) {
+  if (video.readyState >= 2) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      video.removeEventListener("loadeddata", handleReady);
+      video.removeEventListener("canplay", handleReady);
+      video.removeEventListener("error", handleError);
+    };
+    const handleReady = () => {
+      cleanup();
+      resolve();
+    };
+    const handleError = () => {
+      cleanup();
+      reject(new Error("视频预览加载失败"));
+    };
+    video.addEventListener("loadeddata", handleReady, { once: true });
+    video.addEventListener("canplay", handleReady, { once: true });
+    video.addEventListener("error", handleError, { once: true });
+  });
 }
 
 function startVideoPreviewRenderLoop() {
@@ -6959,7 +6990,6 @@ function updateVideoPreviewPlaybackUi() {
   if (!video) return;
   const duration = Number.isFinite(video.duration) ? video.duration : 0;
   const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
-  if (els.videoPreviewPlayButton) els.videoPreviewPlayButton.textContent = video.paused ? "播放" : "暂停";
   if (els.videoPreviewTimeline) {
     els.videoPreviewTimeline.disabled = !duration;
     els.videoPreviewTimeline.value = duration ? String(Math.round((currentTime / duration) * 1000)) : "0";
