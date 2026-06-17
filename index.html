@@ -266,6 +266,16 @@
                 </select>
               </label>
             </div>
+            <div class="video-color-background-panel" data-video-option="video-color-background">
+              <label class="toggle video-color-background-toggle">
+                <input id="videoColorBackgroundToggle" type="checkbox" />
+                <span>颜色背景</span>
+              </label>
+              <label class="video-color-background-picker" id="videoColorBackgroundField" hidden>
+                <input id="videoColorBackgroundInput" type="color" value="#ffffff" />
+                <span id="videoColorBackgroundText">#ffffff</span>
+              </label>
+            </div>
 
             <div class="actions">
               <button class="primary-button" id="videoProcessButton" type="button" disabled>
@@ -544,6 +554,10 @@
           </div>
           <div class="preview-actions">
             <div class="video-background-tools" id="videoBackgroundTools" hidden>
+              <label class="video-background-toggle">
+                <input id="videoPreviewColorBackgroundToggle" type="checkbox" />
+                <span>颜色背景</span>
+              </label>
               <label class="video-background-color" id="videoBackgroundColorField" title="选择导出背景色">
                 <input id="videoBackgroundColorInput" type="color" value="#ffffff" />
                 <span id="videoBackgroundColorText">#ffffff</span>

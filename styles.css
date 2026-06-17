@@ -2678,6 +2678,66 @@ select,
   pointer-events: none;
 }
 
+.video-color-background-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.video-color-background-panel[hidden] {
+  display: none !important;
+}
+
+.video-color-background-toggle,
+.video-background-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.video-color-background-toggle input,
+.video-background-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--primary);
+}
+
+.video-color-background-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  min-height: 40px;
+  padding: 5px 12px 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.video-color-background-picker[hidden] {
+  display: none !important;
+}
+
+.video-color-background-picker input {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  padding: 0;
+}
+
 .video-background-tools {
   display: inline-flex;
   align-items: center;

@@ -87,6 +87,10 @@ const els = {
   videoClearButton: document.querySelector("#videoClearButton"),
   videoUpscaleSelect: document.querySelector("#videoUpscaleSelect"),
   videoChromaSelect: document.querySelector("#videoChromaSelect"),
+  videoColorBackgroundToggle: document.querySelector("#videoColorBackgroundToggle"),
+  videoColorBackgroundField: document.querySelector("#videoColorBackgroundField"),
+  videoColorBackgroundInput: document.querySelector("#videoColorBackgroundInput"),
+  videoColorBackgroundText: document.querySelector("#videoColorBackgroundText"),
   videoPreviewModal: document.querySelector("#videoPreviewModal"),
   videoPreviewPlayer: document.querySelector("#videoPreviewPlayer"),
   videoPreviewCanvas: document.querySelector("#videoPreviewCanvas"),
@@ -98,6 +102,7 @@ const els = {
   videoPreviewDownloadButton: document.querySelector("#videoPreviewDownloadButton"),
   videoPreviewCloseButton: document.querySelector("#videoPreviewCloseButton"),
   videoBackgroundTools: document.querySelector("#videoBackgroundTools"),
+  videoPreviewColorBackgroundToggle: document.querySelector("#videoPreviewColorBackgroundToggle"),
   videoBackgroundColorField: document.querySelector("#videoBackgroundColorField"),
   videoBackgroundColorInput: document.querySelector("#videoBackgroundColorInput"),
   videoBackgroundColorText: document.querySelector("#videoBackgroundColorText"),
@@ -293,6 +298,9 @@ const videoPreviewState = {
   exportedUrl: "",
   exportedName: "",
   exportedSettingsKey: "",
+  useColorBackground: false,
+  backgroundColor: "#ffffff",
+  sourceUrl: "",
 };
 let previewMode = "result";
 let previewViewMode = "result";
@@ -416,6 +424,7 @@ loadPixianCredentials();
 loadKoukoutuCredentials();
 updateOptionVisibility();
 updateVideoOptionVisibility();
+updateVideoColorBackgroundControls();
 updateApiControls();
 setCompressionPanelExpanded(false);
 updateCompressionQualityControls();
@@ -445,11 +454,14 @@ els.videoWorkspaceInput.addEventListener("change", (event) => {
 els.videoProcessButton.addEventListener("click", processVideoQueue);
 els.videoDownloadButton.addEventListener("click", downloadAllVideos);
 els.videoClearButton.addEventListener("click", clearVideoQueue);
+els.videoColorBackgroundToggle?.addEventListener("change", updateVideoColorBackgroundControls);
+els.videoColorBackgroundInput?.addEventListener("input", updateVideoColorBackgroundControls);
 els.videoPreviewCloseButton.addEventListener("click", () => els.videoPreviewModal.close());
 els.videoPreviewModal.addEventListener("close", () => {
   stopVideoPreviewRenderLoop();
   els.videoPreviewPlayer.pause();
   els.videoPreviewPlayer.removeAttribute("src");
+  delete els.videoPreviewPlayer.dataset.sourceUrl;
   els.videoPreviewPlayer.load();
   if (els.videoPreviewPlayButton) els.videoPreviewPlayButton.textContent = "播放";
   if (els.videoPreviewTimeline) els.videoPreviewTimeline.value = "0";
@@ -462,6 +474,9 @@ els.videoPreviewModal.addEventListener("close", () => {
 els.videoPreviewDownloadButton.addEventListener("click", async () => {
   if (!videoPreviewItem?.blob) return;
   await downloadVideoPreviewOutput(videoPreviewItem);
+});
+els.videoPreviewColorBackgroundToggle?.addEventListener("change", () => {
+  updateVideoPreviewBackground({ sourceChanged: true });
 });
 els.videoPreviewPlayButton?.addEventListener("click", async () => {
   const video = els.videoPreviewPlayer;
@@ -485,9 +500,10 @@ els.videoPreviewTimeline?.addEventListener("input", () => {
 });
 els.videoPreviewPlayer?.addEventListener("loadedmetadata", () => {
   setupVideoPreviewCanvasSize();
-  setVideoPreviewStatus(videoPreviewItem?.requiresLocalChromaKey === false
-    ? "当前结果已带透明通道，可直接预览。"
-    : "当前结果为绿幕视频，已在本地实时合成背景。");
+  const settings = getVideoBackgroundSettings();
+  setVideoPreviewStatus(settings.useColorBackground
+    ? "颜色背景预览中，下载将生成当前颜色的新 MP4。"
+    : "正在预览原始结果视频。");
   renderVideoPreviewFrame();
   updateVideoPreviewPlaybackUi();
 });
@@ -1633,6 +1649,13 @@ async function createVideoItem(file) {
     errorInfo: null,
     blob: null,
     resultUrl: "",
+    sourceGreenVideoBlob: null,
+    sourceGreenVideoUrl: "",
+    sourceGreenOutputName: "",
+    finalVideoUrl: "",
+    useColorBackground: false,
+    backgroundColor: "#ffffff",
+    processMode: "",
     outputName: makeVideoOutputName(file.name, getSelectedVideoMode()),
     resultKind: "",
     requiresLocalChromaKey: true,
@@ -1820,8 +1843,8 @@ async function processVideoQueue() {
   const options = readVideoOptions();
 
   for (const item of videoState.items) {
+    resetVideoResultState(item);
     item.blob = null;
-    item.resultUrl = "";
     item.resultKind = "";
     item.requiresLocalChromaKey = true;
     item.resultMimeType = "";
@@ -1839,16 +1862,14 @@ async function processVideoQueue() {
     try {
       item.outputName = makeVideoOutputName(item.file.name, options.mode);
       const output = await processVideoItem(item, options);
-      item.blob = output.blob;
-      item.outputName = output.name || item.outputName;
-      item.resultKind = output.resultKind || "";
-      item.requiresLocalChromaKey = output.requiresLocalChromaKey !== false;
-      item.resultMimeType = output.mimeType || item.blob.type || "";
-      if (item.resultUrl) URL.revokeObjectURL(item.resultUrl);
+      await applyVideoProcessingOutput(item, output, options);
       item.resultUrl = URL.createObjectURL(item.blob);
+      item.finalVideoUrl = item.resultUrl;
       item.card.classList.add("has-result");
       item.previewButton.disabled = false;
       item.downloadButton.disabled = false;
+      if (item.fileMeta) item.fileMeta.textContent = getVideoTaskMetaText(item, options.mode);
+      await updateVideoResultThumbnail(item);
       setVideoCardStatus(item, "视频处理完成", "is-done");
       finishTaskTiming(item, "done");
     } catch (error) {
@@ -1864,6 +1885,92 @@ async function processVideoQueue() {
   videoState.isProcessing = false;
   stopTaskDurationTimer();
   updateUi();
+}
+
+function resetVideoResultState(item) {
+  if (item.resultUrl) URL.revokeObjectURL(item.resultUrl);
+  if (item.sourceGreenVideoUrl && item.sourceGreenVideoUrl !== item.resultUrl) {
+    URL.revokeObjectURL(item.sourceGreenVideoUrl);
+  }
+  item.resultUrl = "";
+  item.sourceGreenVideoUrl = "";
+  item.sourceGreenVideoBlob = null;
+  item.sourceGreenOutputName = "";
+  item.finalVideoUrl = "";
+  item.useColorBackground = false;
+  item.backgroundColor = "#ffffff";
+  item.processMode = "";
+}
+
+function modeUsesVideoChroma(mode) {
+  return mode === "video-chroma" || mode === "video-chroma-upscale";
+}
+
+async function applyVideoProcessingOutput(item, output, options) {
+  const rawBlob = output.blob;
+  const rawName = output.name || item.outputName;
+  const rawMimeType = output.mimeType || rawBlob.type || "";
+  const usesChroma = modeUsesVideoChroma(options.mode);
+  item.processMode = options.mode;
+  item.resultKind = output.resultKind || "";
+  item.requiresLocalChromaKey = usesChroma ? output.requiresLocalChromaKey !== false : false;
+  item.resultMimeType = rawMimeType;
+
+  if (usesChroma) {
+    item.sourceGreenVideoBlob = rawBlob;
+    item.sourceGreenOutputName = rawName;
+    item.sourceGreenVideoUrl = URL.createObjectURL(rawBlob);
+  }
+
+  if (usesChroma && options.useColorBackground) {
+    item.useColorBackground = true;
+    item.backgroundColor = normalizeHexColor(options.backgroundColor || "#ffffff");
+    setVideoCardStatus(item, `正在合成颜色背景 ${item.backgroundColor}...`, "is-working");
+    let composed;
+    try {
+      composed = await renderVideoWithNativeMp4(
+        {
+          ...item,
+          blob: rawBlob,
+          resultUrl: item.sourceGreenVideoUrl,
+          requiresLocalChromaKey: true,
+        },
+        { useColorBackground: true, color: item.backgroundColor },
+      );
+    } catch (error) {
+      console.error(error);
+      throw createVideoError("视频导出失败，请稍后重试。", {
+        stage: "compose_color_background",
+        detail: error?.message || String(error),
+        taskId: item.runninghubTaskId,
+      });
+    }
+    item.blob = composed.blob;
+    item.outputName = makeColorBackgroundMp4OutputName(item.file.name);
+    item.resultKind = "color-background-mp4";
+    item.requiresLocalChromaKey = false;
+    item.resultMimeType = composed.mimeType || item.blob.type || "video/mp4";
+    return;
+  }
+
+  item.blob = rawBlob;
+  item.outputName = rawName;
+  item.useColorBackground = false;
+  item.backgroundColor = "#ffffff";
+}
+
+function getVideoTaskMetaText(item, mode) {
+  const color = item.useColorBackground ? ` · 颜色背景 ${item.backgroundColor}` : "";
+  return `${formatVideoMeta(item.file, item.metadata)} · ${getVideoModeLabel(mode)}${color}`;
+}
+
+async function updateVideoResultThumbnail(item) {
+  if (!item?.resultUrl || !item.image) return;
+  const thumbnail = await captureVideoThumbnail(item.resultUrl).catch(() => "");
+  if (thumbnail) {
+    item.image.src = thumbnail;
+    item.thumbnail = thumbnail;
+  }
 }
 
 async function processVideoItem(item, options) {
@@ -2064,6 +2171,8 @@ function readVideoOptions() {
     mode: getSelectedVideoMode(),
     upscaleWorkflow: els.videoUpscaleSelect.value,
     chromaWorkflow: els.videoChromaSelect.value,
+    useColorBackground: Boolean(els.videoColorBackgroundToggle?.checked),
+    backgroundColor: normalizeHexColor(els.videoColorBackgroundInput?.value || "#ffffff"),
     keyColor: DEFAULT_VIDEO_CHROMA_OPTIONS.keyColor,
     chromaTolerance: DEFAULT_VIDEO_CHROMA_OPTIONS.tolerance,
     chromaFeather: DEFAULT_VIDEO_CHROMA_OPTIONS.feather,
@@ -6118,6 +6227,22 @@ function updateVideoOptionVisibility() {
   document.querySelectorAll('[data-video-option="video-chroma-model"]').forEach((element) => {
     element.hidden = !needsChroma;
   });
+  document.querySelectorAll('[data-video-option="video-color-background"]').forEach((element) => {
+    element.hidden = !needsChroma;
+  });
+  updateVideoColorBackgroundControls();
+}
+
+function updateVideoColorBackgroundControls() {
+  const mode = getSelectedVideoMode();
+  const needsChroma = mode === "video-chroma" || mode === "video-chroma-upscale";
+  const checked = needsChroma && Boolean(els.videoColorBackgroundToggle?.checked);
+  if (els.videoColorBackgroundField) els.videoColorBackgroundField.hidden = !checked;
+  const color = normalizeHexColor(els.videoColorBackgroundInput?.value || "#ffffff");
+  if (els.videoColorBackgroundInput && els.videoColorBackgroundInput.value !== color) {
+    els.videoColorBackgroundInput.value = color;
+  }
+  if (els.videoColorBackgroundText) els.videoColorBackgroundText.textContent = color;
 }
 
 function getVideoConfigWarning() {
@@ -6366,10 +6491,19 @@ function cleanupVideoItem(item) {
   if (!item) return;
   if (item.url) URL.revokeObjectURL(item.url);
   if (item.resultUrl) URL.revokeObjectURL(item.resultUrl);
+  if (item.sourceGreenVideoUrl && item.sourceGreenVideoUrl !== item.resultUrl) {
+    URL.revokeObjectURL(item.sourceGreenVideoUrl);
+  }
   item.url = "";
   item.resultUrl = "";
+  item.sourceGreenVideoUrl = "";
+  item.sourceGreenVideoBlob = null;
+  item.sourceGreenOutputName = "";
+  item.finalVideoUrl = "";
   item.file = null;
   item.blob = null;
+  item.useColorBackground = false;
+  item.backgroundColor = "#ffffff";
   item.resultKind = "";
   item.requiresLocalChromaKey = true;
   item.resultMimeType = "";
@@ -6383,14 +6517,18 @@ function openVideoPreview(item) {
   videoPreviewItem = item;
   if (!item.resultUrl) item.resultUrl = URL.createObjectURL(item.blob);
   els.videoPreviewTitle.textContent = item.outputName || "视频预览";
-  setVideoPreviewStatus("正在准备背景预览...");
   clearVideoPreviewExport();
-  if (els.videoBackgroundColorInput) els.videoBackgroundColorInput.value = "#ffffff";
-  if (els.videoBackgroundColorText) els.videoBackgroundColorText.textContent = "#ffffff";
-  els.videoPreviewPlayer.src = item.resultUrl;
+  const canUseColorBackground = canUseVideoColorBackground(item);
+  videoPreviewState.useColorBackground = canUseColorBackground && Boolean(item.useColorBackground);
+  videoPreviewState.backgroundColor = normalizeHexColor(item.backgroundColor || "#ffffff");
+  if (els.videoPreviewColorBackgroundToggle) {
+    els.videoPreviewColorBackgroundToggle.checked = videoPreviewState.useColorBackground;
+  }
+  if (els.videoBackgroundColorInput) els.videoBackgroundColorInput.value = videoPreviewState.backgroundColor;
+  if (els.videoBackgroundColorText) els.videoBackgroundColorText.textContent = videoPreviewState.backgroundColor;
   els.videoPreviewPlayer.currentTime = 0;
-  if (els.videoBackgroundTools) els.videoBackgroundTools.hidden = false;
-  updateVideoPreviewBackground();
+  if (els.videoBackgroundTools) els.videoBackgroundTools.hidden = !canUseColorBackground;
+  updateVideoPreviewBackground({ sourceChanged: true, skipRender: true });
   if (typeof els.videoPreviewModal.showModal === "function") {
     els.videoPreviewModal.showModal();
   } else {
@@ -6398,24 +6536,99 @@ function openVideoPreview(item) {
   }
 }
 
-function updateVideoPreviewBackground() {
-  const color = els.videoBackgroundColorInput?.value || "#ffffff";
+function updateVideoPreviewBackground({ sourceChanged = false, skipRender = false } = {}) {
+  const canUseColorBackground = canUseVideoColorBackground(videoPreviewItem);
+  const useColorBackground = canUseColorBackground && Boolean(els.videoPreviewColorBackgroundToggle?.checked);
+  const color = normalizeHexColor(els.videoBackgroundColorInput?.value || "#ffffff");
+  videoPreviewState.useColorBackground = useColorBackground;
+  videoPreviewState.backgroundColor = color;
+  if (els.videoBackgroundColorField) els.videoBackgroundColorField.hidden = !useColorBackground;
   if (els.videoBackgroundColorText) els.videoBackgroundColorText.textContent = color;
   markVideoPreviewExportDirty();
-  renderVideoPreviewFrame();
+  if (sourceChanged) syncVideoPreviewSource();
+  if (!skipRender) renderVideoPreviewFrame();
   if (videoPreviewItem) {
-    setVideoPreviewStatus("颜色背景预览已更新。下载将生成真实 MP4。");
+    setVideoPreviewStatus(useColorBackground
+      ? "颜色背景预览已更新，下载将生成当前颜色的新 MP4。"
+      : canUseColorBackground
+        ? "正在预览原始结果视频。"
+        : "正在预览视频结果。");
   }
+}
+
+function canUseVideoColorBackground(item) {
+  if (!item) return false;
+  return Boolean(item.sourceGreenVideoBlob || item.sourceGreenVideoUrl || modeUsesVideoChroma(item.processMode));
+}
+
+function syncVideoPreviewSource() {
+  if (!videoPreviewItem || !els.videoPreviewPlayer) return;
+  const settings = getVideoBackgroundSettings();
+  const sourceUrl = settings.useColorBackground
+    ? getVideoPreviewGreenSource(videoPreviewItem).resultUrl
+    : getVideoPreviewOriginalUrl(videoPreviewItem);
+  if (!sourceUrl || els.videoPreviewPlayer.dataset.sourceUrl === sourceUrl) return;
+  const video = els.videoPreviewPlayer;
+  const wasPlaying = !video.paused && !video.ended;
+  const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+  stopVideoPreviewRenderLoop();
+  video.pause();
+  video.dataset.sourceUrl = sourceUrl;
+  video.addEventListener("loadedmetadata", async () => {
+    video.currentTime = Math.min(currentTime, Number.isFinite(video.duration) ? video.duration : currentTime);
+    if (wasPlaying) {
+      try {
+        await video.play();
+        startVideoPreviewRenderLoop();
+      } catch (error) {
+        console.warn(error);
+      }
+    }
+  }, { once: true });
+  video.src = sourceUrl;
+  video.load();
+}
+
+function getVideoPreviewGreenSource(item) {
+  return {
+    ...item,
+    blob: item.sourceGreenVideoBlob || item.blob,
+    resultUrl: item.sourceGreenVideoUrl || item.resultUrl,
+    outputName: item.sourceGreenOutputName || item.outputName,
+    requiresLocalChromaKey: true,
+  };
+}
+
+function getVideoPreviewOriginalBlob(item) {
+  if (item.useColorBackground && item.sourceGreenVideoBlob) return item.sourceGreenVideoBlob;
+  return item.blob;
+}
+
+function getVideoPreviewOriginalUrl(item) {
+  if (item.useColorBackground && item.sourceGreenVideoUrl) return item.sourceGreenVideoUrl;
+  return item.resultUrl;
+}
+
+function getVideoPreviewOriginalName(item) {
+  if (item.useColorBackground && item.sourceGreenOutputName) return item.sourceGreenOutputName;
+  return item.outputName || item.file?.name || "video";
 }
 
 async function downloadVideoPreviewOutput(item) {
   const button = els.videoPreviewDownloadButton;
   if (!item?.blob || !button) return;
   const settings = getVideoBackgroundSettings();
+  if (!settings.useColorBackground) {
+    const originalBlob = getVideoPreviewOriginalBlob(item);
+    const originalName = getVideoPreviewOriginalName(item);
+    downloadBlob(originalBlob, originalName);
+    setVideoPreviewStatus("已下载原始结果视频。");
+    return;
+  }
   const settingsKey = getVideoBackgroundSettingsKey(settings);
   if (videoPreviewState.exportedBlob && videoPreviewState.exportedSettingsKey === settingsKey) {
-    downloadBlob(videoPreviewState.exportedBlob, videoPreviewState.exportedName || makeColorBackgroundMp4OutputName(item.outputName || item.file?.name || "video"));
-    setVideoPreviewStatus("MP4 已生成，下载的是新合成视频。");
+    downloadBlob(videoPreviewState.exportedBlob, videoPreviewState.exportedName || makeColorBackgroundMp4OutputName(item.file?.name || item.outputName || "video"));
+    setVideoPreviewStatus("已下载当前颜色背景视频。");
     return;
   }
   const originalText = button.textContent;
@@ -6423,21 +6636,19 @@ async function downloadVideoPreviewOutput(item) {
   videoPreviewState.exportBusy = true;
   button.textContent = "处理中...";
   try {
-    setVideoPreviewStatus("正在重新合成并导出 MP4...");
-    const { blob, mimeType } = await renderVideoWithNativeMp4(item, settings);
+    setVideoPreviewStatus("正在根据当前颜色重新合成 MP4...");
+    const source = getVideoPreviewGreenSource(item);
+    const { blob, mimeType } = await renderVideoWithNativeMp4(source, settings);
     if (!/mp4/i.test(mimeType || blob.type || "")) {
       throw new Error("当前浏览器不支持 MP4 导出，请更换浏览器或稍后重试。");
     }
-    const outputName = makeColorBackgroundMp4OutputName(item.outputName || item.file?.name || "video");
+    const outputName = makeColorBackgroundMp4OutputName(item.file?.name || item.outputName || "video");
     setVideoPreviewExport(blob, outputName, settingsKey);
     downloadBlob(blob, outputName);
-    setVideoPreviewStatus("MP4 已生成，下载的是新合成视频。");
+    setVideoPreviewStatus("已下载当前颜色背景视频。");
   } catch (error) {
     console.error(error);
-    const message = String(error?.message || error || "");
-    setVideoPreviewStatus(message.includes("不支持 MP4")
-      ? "当前浏览器不支持 MP4 导出，请更换浏览器或稍后重试。"
-      : "视频导出失败，请稍后重试。");
+    setVideoPreviewStatus("视频导出失败，请稍后重试。");
   } finally {
     button.disabled = false;
     videoPreviewState.exportBusy = false;
@@ -6448,7 +6659,7 @@ async function downloadVideoPreviewOutput(item) {
 async function renderVideoWithNativeMp4(item, backgroundSettings) {
   if (typeof MediaRecorder === "undefined") throw new Error("当前浏览器不支持视频导出");
   const mimeType = getNativeMp4RecorderMimeType();
-  if (!mimeType) throw new Error("当前浏览器无法直接导出 MP4，请接入转码服务后使用。");
+  if (!mimeType) throw new Error("当前浏览器不支持 MP4 导出，请更换浏览器或稍后重试。");
   const sourceUrl = item.resultUrl || URL.createObjectURL(item.blob);
   const shouldRevoke = !item.resultUrl;
   const sourceVideo = document.createElement("video");
@@ -6575,6 +6786,10 @@ function renderVideoPreviewFrame() {
   if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) setupVideoPreviewCanvasSize();
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   const settings = getVideoBackgroundSettings();
+  if (!settings.useColorBackground) {
+    renderRawVideoFrameToCanvas({ video, canvas, ctx });
+    return;
+  }
   renderChromaVideoFrameToCanvas({
     video,
     canvas,
@@ -6584,6 +6799,13 @@ function renderVideoPreviewFrame() {
     requiresLocalChromaKey: videoPreviewItem?.requiresLocalChromaKey !== false,
     scratch: videoPreviewState,
   });
+}
+
+function renderRawVideoFrameToCanvas({ video, canvas, ctx = canvas.getContext("2d") }) {
+  const width = canvas.width || video.videoWidth || 1;
+  const height = canvas.height || video.videoHeight || 1;
+  ctx.clearRect(0, 0, width, height);
+  ctx.drawImage(video, 0, 0, width, height);
 }
 
 function getSizedReusableCanvas(key, width, height) {
@@ -6688,14 +6910,26 @@ function drawVideoBackground(ctx, width, height, color = "#ffffff") {
   ctx.fillRect(0, 0, width, height);
 }
 
+function normalizeHexColor(color) {
+  const value = String(color || "").trim().toLowerCase();
+  if (/^#[0-9a-f]{6}$/.test(value)) return value;
+  if (/^#[0-9a-f]{3}$/.test(value)) {
+    return `#${value[1]}${value[1]}${value[2]}${value[2]}${value[3]}${value[3]}`;
+  }
+  return "#ffffff";
+}
+
 function getVideoBackgroundSettings() {
+  const canUseColorBackground = canUseVideoColorBackground(videoPreviewItem);
   return {
-    color: els.videoBackgroundColorInput?.value || "#ffffff",
+    useColorBackground: canUseColorBackground && Boolean(els.videoPreviewColorBackgroundToggle?.checked),
+    color: normalizeHexColor(els.videoBackgroundColorInput?.value || "#ffffff"),
   };
 }
 
 function getVideoBackgroundSettingsKey(settings) {
-  return `color:${settings.color || "#ffffff"}`;
+  const source = videoPreviewItem?.sourceGreenVideoUrl || videoPreviewItem?.resultUrl || "";
+  return `color-bg:${settings.useColorBackground ? "1" : "0"}:${settings.color || "#ffffff"}:${source}`;
 }
 
 function setVideoPreviewExport(blob, name, settingsKey) {
@@ -6799,8 +7033,6 @@ function getNativeMp4RecorderMimeType() {
   if (typeof MediaRecorder === "undefined") return "";
   const candidates = [
     "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
-    "video/mp4;codecs=avc1.42E01E",
-    "video/mp4;codecs=h264",
     "video/mp4",
   ];
   return candidates.find((type) => MediaRecorder.isTypeSupported?.(type)) || "";
